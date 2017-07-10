@@ -58,8 +58,8 @@ require('node-os-utils').options
 
 Default settings:
 
-- NOT_SUPPORTED_VALUE is `not supported`. os not supported, return value. 
-- INTERVAL is `1000` millisecond. Represents the refresh of the cpu and network workers.
+- `NOT_SUPPORTED_VALUE` is `not supported`. os not supported, return value. 
+- `INTERVAL` is `1000` millisecond. Represents the refresh of the cpu and network workers.
 
 :warning: If this module uses too much CPU, set the `INTERVAL` value to 10000 or more.
 
