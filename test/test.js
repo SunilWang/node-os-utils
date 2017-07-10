@@ -1,0 +1,40 @@
+/* eslint-disable no-undef */
+/**
+ * author       : Sunil Wang
+ * createTime   : 2017/7/10 14:51
+ * description  :
+ */
+
+var osu = require('../')
+var assert = require('assert')
+
+describe('cpu', function () {
+  it('returns cpu average and count', function (done) {
+    var cpu = osu.cpu
+    var info = cpu.average()
+    var count = cpu.count()
+    assert.ok(count > 0)
+    assert.ok(Object.keys(info).length > 0)
+    done()
+  })
+
+  it('returns cpu usage', function (done) {
+    var cpu = osu.cpu
+
+    cpu.usage().then(num => {
+      assert.ok(num > 0)
+      done()
+    })
+  })
+})
+
+describe('drive', function () {
+  it('returns drive info', function (done) {
+    var drive = osu.drive
+
+    drive.info().then(info => {
+      assert.ok(Object.keys(info).length > 0)
+      done()
+    })
+  })
+})
