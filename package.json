@@ -1,6 +1,6 @@
 {
   "name": "node-os-utils",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "An operating system utility library.",
   "main": "index.js",
   "scripts": {
@@ -14,7 +14,7 @@
     "name": "SunilWang",
     "email": "ahwangshu@qq.com"
   },
-  "keywords":[
+  "keywords": [
     "os",
     "operating system",
     "server",
