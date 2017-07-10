@@ -9,5 +9,6 @@ require('./lib/cpu')
 require('./lib/drive')
 require('./lib/mem')
 require('./lib/netstat')
+require('./lib/users')
 
 module.exports = require('./lib/bucket')
