@@ -26,14 +26,14 @@ An operating system utility library. Some methods are wrappers of node libraries
 
 One line installation with [npm](http://npmjs.org).
 
-``` bash
+```bash
 $ npm install node-os-utils --save
 ```
 Then in your code
 
 ## Example
 
-``` js
+```js
 var osu = require('node-os-utils')
 var cpu = osu.cpu
 
@@ -76,7 +76,7 @@ The following methods are available:
 
 CPU average
 
-``` js
+```js
 var osu = require('node-os-utils')
 var cpu = osu.cpu
 
@@ -97,7 +97,7 @@ CPU average usage
 
 - [interval]: number - interval millisecond. defaulta: 1000
 
-``` js
+```js
 var osu = require('node-os-utils')
 var cpu = osu.cpu
 
@@ -116,7 +116,7 @@ cpu free percentage
 
 - [interval]: number - interval millisecond. defaulta: 1000
 
-``` js
+```js
 var osu = require('node-os-utils')
 var cpu = osu.cpu
 
@@ -143,7 +143,7 @@ cpu.free()
 
 drive info
 
-``` js
+```js
 var osu = require('node-os-utils')
 var drive = osu.drive
 
@@ -178,7 +178,7 @@ drive.info()
 
 memory info
 
-``` js
+```js
 var osu = require('node-os-utils')
 var mem = osu.mem
 
@@ -212,7 +212,7 @@ mem.info()
 ### require('node-os-utils').netstat
 
 #### netstat.stats():Promise(Array[Object])
-``` js
+```js
 var osu = require('node-os-utils')
 var netstat = osu.netstat
 
@@ -235,7 +235,7 @@ netstat.stats()
 
 - [interval]: number - interval millisecond. defaulta: 1000
 
-``` js
+```js
 var osu = require('node-os-utils')
 var netstat = osu.netstat
 
@@ -306,7 +306,7 @@ TTY/SSH opened
 #### osCmd.vmstats():Promise(string)
 ......
 
-``` js
+```js
 var bucket = require('./bucket')
 
 bucket.osCmd = {
