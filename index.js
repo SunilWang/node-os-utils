@@ -4,11 +4,14 @@
  * description  :
  */
 
-require('./lib/original')
 require('./lib/cpu')
 require('./lib/drive')
 require('./lib/mem')
 require('./lib/netstat')
+require('./lib/openfiles')
+require('./lib/osCmd')
+require('./lib/os')
+require('./lib/proc')
 require('./lib/users')
 
 module.exports = require('./lib/bucket')
