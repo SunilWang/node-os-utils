@@ -10,6 +10,8 @@ var assert = require('assert')
 
 describe('cpu', function () {
   it('returns cpu average and count', function (done) {
+    this.timeout(5000)
+
     var cpu = osu.cpu
     var info = cpu.average()
     var count = cpu.count()
@@ -19,6 +21,8 @@ describe('cpu', function () {
   })
 
   it('returns cpu usage', function (done) {
+    this.timeout(5000)
+
     var cpu = osu.cpu
 
     cpu.usage().then(num => {
