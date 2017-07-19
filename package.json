@@ -35,7 +35,5 @@
   "devDependencies": {
     "mocha": "^3.4.2"
   },
-  "dependencies": {
-    "co": "^4.6.0"
-  }
+  "dependencies": {}
 }
