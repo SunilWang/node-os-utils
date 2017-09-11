@@ -1,6 +1,6 @@
 {
   "name": "node-os-utils",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "An operating system utility library.",
   "main": "index.js",
   "scripts": {
