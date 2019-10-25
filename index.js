@@ -15,5 +15,3 @@ require('./lib/proc')
 require('./lib/users')
 
 module.exports = require('./lib/bucket')
-
-console.dir(module.exports)
