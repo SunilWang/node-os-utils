@@ -67,6 +67,22 @@ Default settings:
 
 If you have `not supported` in some categories, your OS configuration is not supported for this option.
 
+You can use `require('node-os-utils').isNotSupported()` to decide `not supported`.
+
+```js
+var osu = require('node-os-utils')
+var osCmd = osu.osCmd
+
+osCmd
+  .topCpu()
+  .then(function(res){
+    if(osu.isNotSupported(res)){
+      // Handle 'not supported'
+    }else{
+      // Things to do...
+    }
+  })
+````
 ## Usage
 The following methods are available:
 
