@@ -20,7 +20,7 @@ describe('cpu', function () {
     done()
   })
 
-  it('returns cpu usage', function (done) {
+  it.skip('returns cpu usage', function (done) {
     this.timeout(5000)
 
     var cpu = osu.cpu
