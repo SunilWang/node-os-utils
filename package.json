@@ -1,6 +1,6 @@
 {
-  "name": "node-os-utils",
-  "version": "1.2.2",
+  "name": "@smc/node-os-utils",
+  "version": "1.2.3",
   "description": "An operating system utility library.",
   "main": "index.js",
   "scripts": {
