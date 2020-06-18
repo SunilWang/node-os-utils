@@ -25,7 +25,7 @@ describe('cpu', function () {
 
     var cpu = osu.cpu
 
-    cpu.usage().then(num => {
+    cpu.usage().then((num) => {
       assert.ok(num > 0)
       done()
     })
@@ -36,7 +36,18 @@ describe('drive', function () {
   it('returns drive info', function (done) {
     var drive = osu.drive
 
-    drive.info().then(info => {
+    drive.info().then((info) => {
+      assert.ok(Object.keys(info).length > 0)
+      done()
+    })
+  })
+})
+
+describe('memory', function () {
+  it('returns memory info', function (done) {
+    var men = osu.mem
+
+    men.info().then((info) => {
       assert.ok(Object.keys(info).length > 0)
       done()
     })
