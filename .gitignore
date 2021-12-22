@@ -56,7 +56,7 @@ typings/
 .yarn-integrity
 
 # dotenv environment variables file
+package-lock.json
 .env
 .idea
-package-lock.json
 
