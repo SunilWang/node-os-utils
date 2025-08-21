@@ -642,7 +642,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
 
     return {
       hostname: unameFields[1] || 'Unknown',
-      platform: unameFields[0] || 'Linux',
+      platform: 'linux', // 统一返回标准平台名称，与 os.platform() 保持一致
       release: unameFields[2] || 'Unknown',
       version: version.trim(),
       arch: unameFields[4] || 'Unknown',

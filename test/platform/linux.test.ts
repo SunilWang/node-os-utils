@@ -335,8 +335,13 @@ describe('Linux System Tests', function() {
       const avgTime = times.reduce((sum, time) => sum + time, 0) / times.length
       const maxTime = Math.max(...times)
       
-      // 最大时间不应该超过平均时间的3倍
-      expect(maxTime).to.be.below(avgTime * 3)
+      // 如果平均时间为0或非常小，检查所有时间都应该在合理范围内（<100ms）
+      if (avgTime < 1) {
+        expect(maxTime).to.be.below(100, 'Even with caching, operations should complete within 100ms')
+      } else {
+        // 最大时间不应该超过平均时间的3倍
+        expect(maxTime).to.be.below(avgTime * 3, `Max time (${maxTime}ms) should not exceed 3x average time (${avgTime}ms)`)
+      }
     }))
   })
 
