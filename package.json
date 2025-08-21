@@ -1,6 +1,6 @@
 {
   "name": "node-os-utils",
-  "version": "2.0.0",
+  "version": "2.0.0-beta.1",
   "description": "Advanced cross-platform operating system monitoring utilities with TypeScript support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -35,6 +35,8 @@
     "lint": "eslint src --ext .ts --fix",
     "lint:check": "eslint src --ext .ts",
     "docs": "typedoc src --out docs",
+    "publish:beta": "npm publish --tag beta",
+    "version:beta": "npm version prerelease --preid=beta",
     "prepublishOnly": "npm run clean && npm run build && npm test"
   },
   "repository": {
