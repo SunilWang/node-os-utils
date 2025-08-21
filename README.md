@@ -5,8 +5,6 @@
 [![TypeScript Support](https://img.shields.io/badge/typescript-supported-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/SunilWang/node-os-utils/test.yml?branch=main)](https://github.com/SunilWang/node-os-utils/actions)
-[![Coverage](https://img.shields.io/codecov/c/github/SunilWang/node-os-utils)](https://codecov.io/gh/SunilWang/node-os-utils)
 
 🚀 **Version 2.0** - A complete rewrite of the popular Node.js operating system monitoring library.
 
@@ -109,13 +107,13 @@ const osutils = new OSUtils({
   cacheEnabled: true,
   cacheTTL: 5000,
   maxCacheSize: 1000,
-  
+
   // Execution settings
   timeout: 10000,
-  
+
   // Debug mode
   debug: false,
-  
+
   // Monitor-specific configurations
   cpu: { cacheTTL: 30000 },
   memory: { cacheTTL: 5000 },
@@ -167,7 +165,7 @@ if (result.success) {
   // Error: handle gracefully
   console.error('Error:', result.error?.message);
   console.error('Code:', result.error?.code);
-  
+
   // Platform-specific handling
   if (result.error?.code === ErrorCode.PLATFORM_NOT_SUPPORTED) {
     console.log('This feature is not available on', result.platform);
@@ -233,7 +231,7 @@ if (loadAvg.success) {
 // Monitor CPU usage with custom interval
 const cpuSubscription = osutils.cpu.monitor(1000, (usage) => {
   console.log(`CPU Usage: ${usage}%`);
-  
+
   // Alert on high usage
   if (usage > 80) {
     console.warn('⚠️ High CPU usage detected!');
@@ -294,7 +292,7 @@ interface DataSize {
   megabytes: number;
   gigabytes: number;
   terabytes: number;
-  
+
   // Formatting methods
   format(precision?: number): string;
   toHuman(): string;
@@ -403,12 +401,12 @@ Process management and monitoring capabilities.
 const processes = await osutils.process.list();
 if (processes.success) {
   console.log('Total processes:', processes.data.length);
-  
+
   // Show top 5 CPU consumers
   const topCpu = processes.data
     .sort((a, b) => b.cpu - a.cpu)
     .slice(0, 5);
-  
+
   topCpu.forEach(proc => {
     console.log(`${proc.name} (${proc.pid}): ${proc.cpu}% CPU`);
   });
@@ -562,10 +560,10 @@ if (health.recommendations.length > 0) {
 class SystemDashboard {
   private subscriptions: any[] = [];
   private alerts: string[] = [];
-  
+
   start() {
     console.log('🚀 Starting system monitoring dashboard...');
-    
+
     // CPU monitoring
     const cpuSub = osutils.cpu.monitor(1000, (usage) => {
       this.updateDisplay('CPU', usage + '%');
@@ -573,7 +571,7 @@ class SystemDashboard {
         this.addAlert(`⚠️ High CPU usage: ${usage}%`);
       }
     });
-    
+
     // Memory monitoring
     const memSub = osutils.memory.monitor(2000, (info) => {
       const percent = info.usagePercentage;
@@ -582,7 +580,7 @@ class SystemDashboard {
         this.addAlert(`⚠️ High memory usage: ${percent}%`);
       }
     });
-    
+
     // Disk monitoring
     const diskSub = osutils.disk.monitor(10000, (info) => {
       const rootDisk = info.find(d => d.mountPoint === '/');
@@ -593,14 +591,14 @@ class SystemDashboard {
         }
       }
     });
-    
+
     // Network monitoring
     const netSub = osutils.network.monitor(5000, (stats) => {
       this.updateDisplay('Network', `↓${stats.totalRx.format()} ↑${stats.totalTx.format()}`);
     });
-    
+
     this.subscriptions = [cpuSub, memSub, diskSub, netSub];
-    
+
     // Alert checker
     setInterval(() => {
       if (this.alerts.length > 0) {
@@ -610,16 +608,16 @@ class SystemDashboard {
       }
     }, 10000);
   }
-  
+
   private updateDisplay(metric: string, value: string) {
     // Update your UI here
     console.log(`📊 ${metric}: ${value}`);
   }
-  
+
   private addAlert(alert: string) {
     this.alerts.push(alert);
   }
-  
+
   stop() {
     this.subscriptions.forEach(sub => sub.unsubscribe());
     console.log('⏹️ Monitoring stopped');
@@ -643,14 +641,14 @@ const osutils = new OSUtils({
   cacheEnabled: true,
   cacheTTL: 5000,
   maxCacheSize: 1000,
-  
+
   // Execution settings
   timeout: 15000,
   retries: 3,
-  
+
   // Debug mode
   debug: false,
-  
+
   // Monitor-specific settings
   cpu: {
     cacheTTL: 1000,    // Fast refresh for CPU
@@ -697,11 +695,11 @@ import { ErrorCode, MonitorError } from 'node-os-utils';
 // Comprehensive error handling
 class SystemMonitoringService {
   private osutils: OSUtils;
-  
+
   constructor() {
     this.osutils = new OSUtils({ debug: true });
   }
-  
+
   async getSystemInfo() {
     try {
       const results = await Promise.allSettled([
@@ -711,39 +709,39 @@ class SystemMonitoringService {
         this.osutils.network.interfaces(),
         this.osutils.system.info()
       ]);
-      
+
       const data: any = {};
       const errors: MonitorError[] = [];
-      
+
       results.forEach((result, index) => {
         const keys = ['cpu', 'memory', 'disk', 'network', 'system'];
         const key = keys[index];
-        
+
         if (result.status === 'fulfilled' && result.value.success) {
           data[key] = result.value.data;
         } else {
-          const error = result.status === 'fulfilled' 
-            ? result.value.error 
+          const error = result.status === 'fulfilled'
+            ? result.value.error
             : new Error(result.reason);
-          
+
           errors.push({
             component: key,
             error,
             timestamp: new Date()
           });
-          
+
           // Handle specific error types
           this.handleComponentError(key, error);
         }
       });
-      
+
       return { data, errors };
     } catch (error) {
       console.error('System monitoring failed:', error);
       throw error;
     }
   }
-  
+
   private handleComponentError(component: string, error: any) {
     switch (error?.code) {
       case ErrorCode.PLATFORM_NOT_SUPPORTED:
@@ -762,19 +760,19 @@ class SystemMonitoringService {
         console.error(`Unknown ${component} error:`, error?.message);
     }
   }
-  
+
   // Graceful degradation example
   async getCPUUsageWithFallback(): Promise<number> {
     const result = await this.osutils.cpu.usage();
-    
+
     if (result.success) {
       return result.data;
     }
-    
+
     // Fallback to OS module
     const os = require('os');
     const cpus = os.cpus();
-    
+
     // Simple calculation as fallback
     return Math.random() * 20 + 10; // Mock fallback
   }
@@ -853,7 +851,7 @@ async function getSystemInfo() {
   const cpuUsage = await osu.cpu.usage();
   const memInfo = await osu.mem.info();
   const driveInfo = await osu.drive.info();
-  
+
   return {
     cpu: cpuUsage,
     memory: memInfo,
@@ -872,7 +870,7 @@ async function getSystemInfo() {
     osutils.memory.info(),
     osutils.disk.info()
   ]);
-  
+
   return {
     cpu: cpuResult.success ? cpuResult.data : null,
     memory: memResult.success ? memResult.data : null,
