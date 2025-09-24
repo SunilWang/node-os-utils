@@ -10,7 +10,7 @@
 
 **Modern, TypeScript-native, cross-platform system monitoring library** providing comprehensive system information with intelligent caching, event-driven monitoring, and robust error handling.
 
-> **Breaking Changes**: This is a major version release with breaking changes from v1.x. See [Migration Guide](#-migration-from-v1x) for upgrade instructions.
+> **Breaking Changes**: This is a major version release with breaking changes from v1.x.
 
 ## ✨ What's New in v2.0
 
