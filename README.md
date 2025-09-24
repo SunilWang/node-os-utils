@@ -30,6 +30,48 @@
 - **🔍 Comprehensive**: CPU, Memory, Disk, Network, Process, and System monitoring
 - **📈 Real-time**: Event-driven monitoring with customizable intervals
 
+### 🧱 Architecture at a Glance
+- **AdapterFactory** centralises platform detection, caching instantiated adapters and exposing helper utilities such as `getSupportedPlatforms()` and `checkPlatformCapabilities()`.
+- **CommandExecutor** normalises shell execution across operating systems with smart fallbacks (`/bin/bash` → `/bin/sh`, PowerShell auto discovery) and uniform error objects.
+- **Platform Adapters** encapsulate OS-specific logic (Linux via `/proc`, macOS via `sysctl`/`powermetrics`, Windows via PowerShell + WMI) while reporting declared feature support.
+- **CacheManager** provides adaptive TTL-based caching with LRU eviction to minimise expensive system calls during polling-heavy workloads.
+
+### 🖥️ Platform Support Matrix
+
+| Capability | Linux | macOS | Windows |
+|------------|:-----:|:-----:|:-------:|
+| CPU usage / info | ✅ | ✅ | ✅ |
+| CPU temperature | ⚠️ 需要 `/sys/class/thermal` | ⚠️ 需要 `powermetrics` (sudo) | ❌ （未开放 API） |
+| Memory pressure | ⚠️ 受限 | ✅ | ⚠️ 通过 WMI 估算 |
+| Disk IO stats | ✅ | ✅ | ❌ |
+| Network stats | ✅ (`/proc/net/dev`) | ✅ (`netstat -ib`) | ⚠️ PowerShell 需管理员权限 |
+| Process details | ✅ | ✅ | ✅ (WMI) |
+| System services | ⚠️ `systemctl` 可选 | ❌ | ✅ |
+
+> **Legend**: ✅ 全量支持 · ⚠️ 部分或受限 · ❌ 暂不支持
+
+### 🔍 Capability Diagnostics
+
+```ts
+import { OSUtils } from 'node-os-utils';
+
+const osutils = new OSUtils();
+const report = await osutils.checkPlatformCapabilities();
+
+console.table({
+  platform: report.platform,
+  supported: report.supported,
+  commands: report.capabilities.commands.join(','),
+  features: report.capabilities.features.join(',')
+});
+
+if (!report.supported) {
+  console.warn('❗ Some metrics are unavailable:', report.issues);
+}
+```
+
+`AdapterFactory.getDebugInfo()` is also available when you need to inspect feature flags or confirm that platform-specific commands can be executed.
+
 ## 🚀 Installation
 
 ```bash
@@ -186,6 +228,14 @@ enum ErrorCode {
   CACHE_ERROR = 'CACHE_ERROR'
 }
 ```
+
+## 🛠️ Troubleshooting & Permissions
+
+- **macOS temperature metrics** rely on `powermetrics` and require administrator privileges (`sudo powermetrics -n 1 -i 1000 --samplers smc`). When unavailable, the adapter raises `PLATFORM_NOT_SUPPORTED` for that feature.
+- **Windows network & process metrics** call PowerShell CIM cmdlets (`Get-NetAdapterStatistics`, `Get-CimInstance`). Run the host app in an elevated PowerShell session if you encounter `PERMISSION_DENIED` or `COMMAND_FAILED` errors.
+- **Linux command fallbacks**: metrics primarily read `/proc`. If utilities such as `ip`/`ss` are missing, the adapter retries with `ifconfig`/`netstat`, but you can confirm availability up front via `osutils.checkPlatformCapabilities()`.
+- Always inspect `MonitorResult.error.code` for structured error feedback (timeout, permission, unsupported) and provide user guidance accordingly.
+
 ## 📚 Complete API Reference
 
 ### 🔥 CPU Monitor

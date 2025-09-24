@@ -1,6 +1,6 @@
 /**
  * node-os-utils v2.0.0
- * 
+ *
  * 现代化的跨平台操作系统监控工具库
  * TypeScript 重构版本，提供全面的系统监控功能
  */
@@ -14,21 +14,21 @@ import { NetworkMonitor } from './monitors/network-monitor';
 import { ProcessMonitor } from './monitors/process-monitor';
 import { SystemMonitor } from './monitors/system-monitor';
 
-import { 
+import {
   GlobalConfig,
   PlatformAdapter
 } from './types';
 
 /**
  * OSUtils 主类
- * 
+ *
  * 提供统一的系统监控 API，自动处理平台适配和缓存管理
  */
 export class OSUtils {
   private adapter: PlatformAdapter;
   private cache: CacheManager;
   private config: GlobalConfig;
-  
+
   // 监控器实例
   private _cpu?: CPUMonitor;
   private _memory?: MemoryMonitor;
@@ -51,7 +51,7 @@ export class OSUtils {
 
     // 创建平台适配器
     this.adapter = AdapterFactory.create(this.config.platform);
-    
+
     // 创建缓存管理器
     this.cache = new CacheManager({
       maxSize: this.config.maxCacheSize || 1000,
@@ -171,7 +171,7 @@ export class OSUtils {
     if (options.enabled !== undefined) {
       options.enabled ? this.cache.enable() : this.cache.disable();
     }
-    
+
     if (options.maxSize !== undefined || options.defaultTTL !== undefined) {
       // 重新创建缓存管理器
       const currentStats = this.cache.getStats();
@@ -180,7 +180,7 @@ export class OSUtils {
         defaultTTL: options.defaultTTL || this.config.cacheTTL || 5000,
         enabled: this.cache.isEnabled()
       });
-      
+
       // 重置监控器实例以使用新缓存
       this._cpu = undefined;
       this._memory = undefined;
@@ -189,7 +189,7 @@ export class OSUtils {
       this._process = undefined;
       this._system = undefined;
     }
-    
+
     return this;
   }
 
@@ -224,19 +224,19 @@ export class OSUtils {
     return {
       platform: this.adapter.getPlatform(),
       timestamp: Date.now(),
-      system: systemInfo.status === 'fulfilled' && systemInfo.value.success ? 
+      system: systemInfo.status === 'fulfilled' && systemInfo.value.success ?
         systemInfo.value.data : null,
       cpu: {
-        usage: cpuUsage.status === 'fulfilled' && cpuUsage.value.success ? 
+        usage: cpuUsage.status === 'fulfilled' && cpuUsage.value.success ?
           cpuUsage.value.data : null
       },
-      memory: memoryInfo.status === 'fulfilled' && memoryInfo.value.success ? 
+      memory: memoryInfo.status === 'fulfilled' && memoryInfo.value.success ?
         memoryInfo.value.data : null,
-      disk: diskOverview.status === 'fulfilled' && diskOverview.value.success ? 
+      disk: diskOverview.status === 'fulfilled' && diskOverview.value.success ?
         diskOverview.value.data : null,
-      network: networkOverview.status === 'fulfilled' && networkOverview.value.success ? 
+      network: networkOverview.status === 'fulfilled' && networkOverview.value.success ?
         networkOverview.value.data : null,
-      processes: processStats.status === 'fulfilled' && processStats.value.success ? 
+      processes: processStats.status === 'fulfilled' && processStats.value.success ?
         processStats.value.data : null
     };
   }
@@ -263,7 +263,7 @@ export class OSUtils {
       if (result.status === 'fulfilled' && result.value.success && result.value.data) {
         const health = result.value.data;
         allIssues.push(...health.issues);
-        
+
         if (health.status === 'critical') {
           overallStatus = 'critical';
         } else if (health.status === 'warning' && overallStatus !== 'critical') {
@@ -277,11 +277,11 @@ export class OSUtils {
       issues: allIssues,
       timestamp: Date.now(),
       details: {
-        system: systemHealth.status === 'fulfilled' && systemHealth.value.success ? 
+        system: systemHealth.status === 'fulfilled' && systemHealth.value.success ?
           systemHealth.value.data : null,
-        disk: diskHealth.status === 'fulfilled' && diskHealth.value.success ? 
+        disk: diskHealth.status === 'fulfilled' && diskHealth.value.success ?
           diskHealth.value.data : null,
-        network: networkHealth.status === 'fulfilled' && networkHealth.value.success ? 
+        network: networkHealth.status === 'fulfilled' && networkHealth.value.success ?
           networkHealth.value.data : null
       }
     };
@@ -316,7 +316,7 @@ export class OSUtils {
       this._system.destroy();
       this._system = undefined;
     }
-    
+
     // 销毁缓存管理器（清理定时器）
     if (this.cache) {
       this.cache.destroy();

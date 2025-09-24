@@ -10,7 +10,7 @@
 
 **现代化的、TypeScript 原生的跨平台系统监控库**，提供全面的系统信息收集功能，具备智能缓存、事件驱动监控和强大的错误处理机制。
 
-> **重大变更**: 这是一个包含破坏性变更的主要版本发布，与 v1.x 不兼容。请参阅[迁移指南](#-从-v1x-迁移到-20)获取升级说明。
+> **重大变更**: 这是一个包含破坏性变更的主要版本发布，与 v1.x 不兼容。
 
 ## ✨ v2.0 新特性
 
@@ -29,6 +29,48 @@
 - **🎯 类型安全**: 完整的 TypeScript 定义，支持 IntelliSense
 - **🔍 全面**: CPU、内存、磁盘、网络、进程和系统监控
 - **📈 实时**: 具有可自定义间隔的事件驱动监控
+
+### 🧱 架构速览
+- **AdapterFactory** 统一负责平台检测、适配器实例缓存，并提供 `getSupportedPlatforms()`、`checkPlatformCapabilities()` 等辅助工具。
+- **CommandExecutor** 为不同系统提供统一的命令执行与错误封装，支持 `/bin/bash` → `/bin/sh`、PowerShell 自动降级等回退策略。
+- **平台适配器** 封装操作系统特定实现（Linux 依赖 `/proc`，macOS 使用 `sysctl`/`powermetrics`，Windows 结合 PowerShell + WMI），并暴露自身支持的特性清单。
+- **CacheManager** 提供基于 TTL 的智能缓存与 LRU 淘汰，显著降低高频监控时的系统开销。
+
+### 🖥️ 平台支持矩阵
+
+| 功能 | Linux | macOS | Windows |
+|------|:-----:|:-----:|:-------:|
+| CPU 使用率 / 信息 | ✅ | ✅ | ✅ |
+| CPU 温度 | ⚠️ 依赖 `/sys/class/thermal` | ⚠️ 需 `powermetrics`（sudo） | ❌ |
+| 内存压力 | ⚠️ 需额外工具 | ✅ | ⚠️ WMI 估算 |
+| 磁盘 I/O 指标 | ✅ | ✅ | ❌ |
+| 网络统计 | ✅（`/proc/net/dev`） | ✅（`netstat -ib`） | ⚠️ PowerShell 需管理员 |
+| 进程详情 | ✅ | ✅ | ✅（WMI） |
+| 系统服务 | ⚠️ 依赖 `systemctl` | ❌ | ✅ |
+
+> **图例**：✅ 完全支持 · ⚠️ 部分或受限 · ❌ 暂不支持
+
+### 🔍 能力自检
+
+```ts
+import { OSUtils } from 'node-os-utils';
+
+const osutils = new OSUtils();
+const report = await osutils.checkPlatformCapabilities();
+
+console.table({
+  platform: report.platform,
+  supported: report.supported,
+  commands: report.capabilities.commands.join(','),
+  features: report.capabilities.features.join(',')
+});
+
+if (!report.supported) {
+  console.warn('❗ 当前平台部分能力不可用:', report.issues);
+}
+```
+
+需要进一步排查时，还可以调用 `AdapterFactory.getDebugInfo()` 查看适配器特性与系统命令可用性。
 
 ## 🚀 安装
 
@@ -186,6 +228,13 @@ enum ErrorCode {
   CACHE_ERROR = 'CACHE_ERROR'
 }
 ```
+
+## 🛠️ 故障排查与权限提示
+
+- **macOS 温度指标** 依赖 `powermetrics` 且需要管理员权限（`sudo powermetrics -n 1 -i 1000 --samplers smc`）。当命令不可用时，适配器会返回 `PLATFORM_NOT_SUPPORTED`。
+- **Windows 网络 / 进程指标** 使用 PowerShell CIM 指令（`Get-NetAdapterStatistics`、`Get-CimInstance`），遇到 `PERMISSION_DENIED` 或 `COMMAND_FAILED` 建议在提升权限的 PowerShell 会话中运行。
+- **Linux 命令回退**：大多数数据来自 `/proc`，若 `ip`、`ss` 等工具缺失，会自动回退到 `ifconfig`、`netstat`。你也可以提前通过 `osutils.checkPlatformCapabilities()` 验证依赖。
+- 建议检查 `MonitorResult.error.code`，依据不同错误类型（超时、权限、平台不支持）给用户友好的提示。
 
 ## 📂 完整 API 参考
 

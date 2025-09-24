@@ -1,8 +1,8 @@
 import { BaseMonitor } from '../core/base-monitor';
-import { 
-  MonitorResult, 
+import {
+  MonitorResult,
   SystemConfig,
-  SystemInfo, 
+  SystemInfo,
   LoadAverage
 } from '../types';
 import { PlatformAdapter } from '../types/platform';
@@ -10,7 +10,7 @@ import { CacheManager } from '../core/cache-manager';
 
 /**
  * 系统监控器
- * 
+ *
  * 提供系统级别的监控功能，包括系统信息、运行时间、负载等
  */
 export class SystemMonitor extends BaseMonitor<SystemInfo> {
@@ -30,12 +30,12 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
    */
   async info(): Promise<MonitorResult<SystemInfo>> {
     const cacheKey = 'system-info';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('system.info');
-        
+
         const rawData = await this.adapter.getSystemInfo();
         return this.transformSystemInfo(rawData);
       },
@@ -58,16 +58,16 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     }
 
     const cacheKey = 'system-uptime';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('system.uptime');
-        
+
         const rawData = await this.adapter.getSystemUptime();
         const uptime = this.safeParseNumber(rawData.uptime) * 1000; // 转换为毫秒
         const bootTime = Date.now() - uptime;
-        
+
         return {
           uptime,
           uptimeFormatted: this.formatUptime(uptime),
@@ -96,27 +96,27 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     }
 
     const cacheKey = 'system-load';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('system.load');
-        
+
         const rawData = await this.adapter.getSystemLoad();
         const loadAvg = this.transformLoadAverage(rawData);
-        
+
         // 获取 CPU 核心数用于标准化负载
         const cpuInfo = await this.adapter.getCPUInfo();
         const cpuCores = cpuInfo.cores || cpuInfo.count || 1;
-        
+
         const normalized = {
           load1: loadAvg.load1 / cpuCores,
           load5: loadAvg.load5 / cpuCores,
           load15: loadAvg.load15 / cpuCores
         };
-        
+
         const status = this.evaluateLoadStatus(normalized.load1);
-        
+
         return {
           ...loadAvg,
           normalized,
@@ -143,12 +143,12 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     }
 
     const cacheKey = 'system-users';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('system.users');
-        
+
         const rawData = await this.adapter.getSystemUsers();
         return this.transformUsersList(rawData);
       },
@@ -172,12 +172,12 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     }
 
     const cacheKey = 'system-services';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('system.services');
-        
+
         const rawData = await this.adapter.getSystemServices();
         return this.transformServicesList(rawData);
       },
@@ -212,7 +212,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     };
   }>> {
     const cacheKey = 'system-overview';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -230,13 +230,13 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
         ]);
 
         const system = {
-          hostname: systemInfo.status === 'fulfilled' && systemInfo.value.success ? 
+          hostname: systemInfo.status === 'fulfilled' && systemInfo.value.success ?
             systemInfo.value.data!.hostname : 'unknown',
-          platform: systemInfo.status === 'fulfilled' && systemInfo.value.success ? 
+          platform: systemInfo.status === 'fulfilled' && systemInfo.value.success ?
             systemInfo.value.data!.platform : 'unknown',
-          uptime: uptimeInfo.status === 'fulfilled' && uptimeInfo.value.success ? 
+          uptime: uptimeInfo.status === 'fulfilled' && uptimeInfo.value.success ?
             uptimeInfo.value.data!.uptimeFormatted : 'unknown',
-          loadStatus: loadInfo.status === 'fulfilled' && loadInfo.value.success ? 
+          loadStatus: loadInfo.status === 'fulfilled' && loadInfo.value.success ?
             loadInfo.value.data!.status : 'unknown'
         };
 
@@ -249,9 +249,9 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
         };
 
         const counts = {
-          processes: systemInfo.status === 'fulfilled' && systemInfo.value.success ? 
+          processes: systemInfo.status === 'fulfilled' && systemInfo.value.success ?
             systemInfo.value.data!.processCount || 0 : 0,
-          users: usersInfo.status === 'fulfilled' && usersInfo.value.success ? 
+          users: usersInfo.status === 'fulfilled' && usersInfo.value.success ?
             usersInfo.value.data!.length : 0
         };
 
@@ -280,7 +280,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     bootTime?: number;
   }>> {
     const cacheKey = 'system-time';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -326,7 +326,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     score: number; // 0-100
   }>> {
     const cacheKey = 'system-health';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -380,10 +380,10 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
           try {
             const servicesResult = await this.services();
             if (servicesResult.success && servicesResult.data) {
-              const failedServices = servicesResult.data.filter(service => 
+              const failedServices = servicesResult.data.filter(service =>
                 service.status === 'failed' && service.enabled
               );
-              
+
               if (failedServices.length > 0) {
                 issues.push(`Failed services: ${failedServices.map(s => s.name).join(', ')}`);
                 checks.services = false;
@@ -399,7 +399,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
 
         // 确定整体健康状态
         let status: 'healthy' | 'warning' | 'critical';
-        
+
         if (totalScore >= 90) {
           status = 'healthy';
         } else if (totalScore >= 70) {
@@ -566,7 +566,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     const minutes = Math.floor((seconds % 3600) / 60);
 
     const parts: string[] = [];
-    
+
     if (days > 0) {
       parts.push(`${days} day${days > 1 ? 's' : ''}`);
     }
@@ -603,7 +603,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     issues: string[];
   } {
     const issues: string[] = [];
-    
+
     // 检查负载状态
     if (loadInfo.status === 'fulfilled' && loadInfo.value.success) {
       const loadStatus = loadInfo.value.data.status;
@@ -621,7 +621,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
 
     // 确定整体状态
     let status: 'healthy' | 'warning' | 'critical' = 'healthy';
-    
+
     if (issues.some(issue => issue.includes('Critical'))) {
       status = 'critical';
     } else if (issues.length > 0) {
@@ -640,7 +640,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     }
 
     const normalizedStatus = status.toLowerCase().trim();
-    
+
     if (normalizedStatus.includes('running') || normalizedStatus.includes('active') || normalizedStatus === 'start') {
       return 'running';
     }
@@ -687,12 +687,12 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     if (typeof value === 'number') {
       return isNaN(value) ? 0 : value;
     }
-    
+
     if (typeof value === 'string') {
       const parsed = parseFloat(value);
       return isNaN(parsed) ? 0 : parsed;
     }
-    
+
     return 0;
   }
 }

@@ -1,8 +1,8 @@
 import { BaseMonitor } from '../core/base-monitor';
-import { 
-  MonitorResult, 
+import {
+  MonitorResult,
   NetworkConfig,
-  NetworkInterface, 
+  NetworkInterface,
   NetworkStats,
   NetworkAddress,
   DataSize
@@ -12,7 +12,7 @@ import { CacheManager } from '../core/cache-manager';
 
 /**
  * 网络监控器
- * 
+ *
  * 提供网络相关的监控功能，包括接口信息、流量统计、连接状态等
  */
 export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
@@ -41,12 +41,12 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
    */
   async interfaces(): Promise<MonitorResult<NetworkInterface[]>> {
     const cacheKey = 'network-interfaces';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('network.interfaces');
-        
+
         const rawData = await this.adapter.getNetworkInterfaces();
         return this.transformNetworkInterfaces(rawData);
       },
@@ -59,7 +59,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
    */
   async interfaceByName(name: string): Promise<MonitorResult<NetworkInterface | null>> {
     const interfacesResult = await this.interfaces();
-    
+
     if (!interfacesResult.success || !interfacesResult.data) {
       return interfacesResult as MonitorResult<NetworkInterface | null>;
     }
@@ -71,7 +71,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
   /**
    * 获取网络统计信息（异步版本）
    */
-  async statsAsync(): Promise<MonitorResult<NetworkStats[]>> {
+  async statsAsync(options: { skipCache?: boolean } = {}): Promise<MonitorResult<NetworkStats[]>> {
     if (!this.networkConfig.includeInterfaceStats) {
       return this.createErrorResult(
         this.createUnsupportedError('network.stats (disabled in config)')
@@ -79,15 +79,24 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     }
 
     const cacheKey = 'network-stats';
-    
+    const fetchStats = async () => {
+      this.validatePlatformSupport('network.stats');
+      const rawData = await this.adapter.getNetworkStats();
+      return this.transformNetworkStats(rawData);
+    };
+
+    if (options.skipCache) {
+      try {
+        const data = await fetchStats();
+        return this.createSuccessResult(data, false);
+      } catch (error) {
+        return this.handleError(error);
+      }
+    }
+
     return this.executeWithCache(
       cacheKey,
-      async () => {
-        this.validatePlatformSupport('network.stats');
-        
-        const rawData = await this.adapter.getNetworkStats();
-        return this.transformNetworkStats(rawData);
-      },
+      fetchStats,
       this.networkConfig.cacheTTL || 2000 // 统计信息缓存较短
     );
   }
@@ -97,7 +106,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
    */
   async statsByInterface(interfaceName: string): Promise<MonitorResult<NetworkStats | null>> {
     const statsResult = await this.statsAsync();
-    
+
     if (!statsResult.success || !statsResult.data) {
       return statsResult as MonitorResult<NetworkStats | null>;
     }
@@ -126,9 +135,9 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     }
 
     const interval = this.networkConfig.bandwidthInterval || 1000;
-    
+
     // 第一次测量
-    const firstStatsResult = await this.statsAsync();
+    const firstStatsResult = await this.statsAsync({ skipCache: true });
     if (!firstStatsResult.success || !firstStatsResult.data) {
       throw new Error('Failed to get network stats for bandwidth calculation');
     }
@@ -137,7 +146,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     await new Promise(resolve => setTimeout(resolve, interval));
 
     // 第二次测量
-    const secondStatsResult = await this.statsAsync();
+    const secondStatsResult = await this.statsAsync({ skipCache: true });
     if (!secondStatsResult.success || !secondStatsResult.data) {
       throw new Error('Failed to get second network stats for bandwidth calculation');
     }
@@ -166,12 +175,12 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     }
 
     const cacheKey = 'network-connections';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('network.connections');
-        
+
         const rawData = await this.adapter.getNetworkConnections();
         return this.transformNetworkConnections(rawData);
       },
@@ -187,12 +196,12 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     interface: string;
   } | null>> {
     const cacheKey = 'network-gateway';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('network.gateway');
-        
+
         const rawData = await this.adapter.getDefaultGateway();
         return this.transformGatewayInfo(rawData);
       },
@@ -208,7 +217,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     ipv6?: string;
   }>> {
     const cacheKey = 'network-public-ip';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -235,7 +244,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     };
   }>> {
     const cacheKey = 'network-health';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -250,10 +259,10 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
         try {
           const interfacesResult = await this.interfaces();
           if (interfacesResult.success && interfacesResult.data) {
-            const activeInterfaces = interfacesResult.data.filter(iface => 
+            const activeInterfaces = interfacesResult.data.filter(iface =>
               iface.state === 'up' && !iface.internal
             );
-            
+
             if (activeInterfaces.length === 0) {
               issues.push('No active network interfaces found');
               checks.interfaceStatus = false;
@@ -267,7 +276,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
                   const totalPackets = stats.rxPackets + stats.txPackets;
                   const totalErrors = stats.rxErrors + stats.txErrors;
                   const errorRate = totalPackets > 0 ? (totalErrors / totalPackets) * 100 : 0;
-                  
+
                   if (errorRate > 5) {
                     issues.push(`High error rate on interface ${stats.interface}: ${errorRate.toFixed(2)}%`);
                     checks.performance = false;
@@ -295,7 +304,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
 
         // 确定整体健康状态
         let status: 'healthy' | 'warning' | 'critical' = 'healthy';
-        
+
         if (!checks.interfaceStatus || !checks.connectivity) {
           status = 'critical';
         } else if (!checks.performance || issues.length > 0) {
@@ -324,7 +333,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     totalErrors: number;
   }>> {
     const cacheKey = 'network-overview';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -338,7 +347,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
         }
 
         const interfaces = interfacesResult.data;
-        const activeInterfaces = interfaces.filter(iface => 
+        const activeInterfaces = interfaces.filter(iface =>
           iface.state === 'up' && !iface.internal
         ).length;
 
@@ -433,26 +442,31 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
   /**
    * 转换网络接口信息
    */
+  /**
+   * 将平台适配器返回的原始接口数据统一转换为 NetworkInterface 结构
+   * 支持 Node.js os.networkInterfaces() 返回的对象以及适配器自定义的数组格式
+   */
   private transformNetworkInterfaces(rawData: any): NetworkInterface[] {
-    if (!rawData || typeof rawData !== 'object') {
+    if (!rawData) {
       return [];
     }
 
-    const interfaces: NetworkInterface[] = [];
-
-    // Node.js os.networkInterfaces() 格式
-    for (const [name, addresses] of Object.entries(rawData)) {
-      if (!Array.isArray(addresses)) continue;
+    /**
+     * 收集单个网卡的信息并写入结果数组
+     */
+    const addInterface = (name: string, addresses: any[]): void => {
+      if (!Array.isArray(addresses) || addresses.length === 0) {
+        return;
+      }
 
       const transformedAddresses: NetworkAddress[] = addresses.map((addr: any) => ({
         address: addr.address || '',
         netmask: addr.netmask || '',
-        family: addr.family === 'IPv6' ? 'IPv6' : 'IPv4',
+        family: addr.family === 'IPv6' || addr.family === 6 ? 'IPv6' : 'IPv4',
         internal: addr.internal || false,
         scopeid: addr.scopeid
       }));
 
-      // 从地址信息推断接口信息
       const firstAddr = addresses[0];
       const networkInterface: NetworkInterface = {
         name,
@@ -466,9 +480,40 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
         duplex: firstAddr?.duplex
       };
 
-      // 过滤指定接口
       if (this.shouldIncludeInterface(networkInterface)) {
         interfaces.push(networkInterface);
+      }
+    };
+
+    const interfaces: NetworkInterface[] = [];
+
+    if (Array.isArray(rawData)) {
+      for (const item of rawData) {
+        if (!item || typeof item !== 'object') continue;
+        const name = item.name || item.interface;
+        if (!name) continue;
+
+        const addresses = Array.isArray(item.addresses)
+          ? item.addresses
+          : [{
+              address: item.address,
+              netmask: item.netmask,
+              family: item.family,
+              internal: item.internal,
+              mac: item.mac,
+              mtu: item.mtu,
+              scopeid: item.scopeid
+            }];
+
+        addInterface(name, addresses as any[]);
+      }
+
+      return interfaces;
+    }
+
+    if (typeof rawData === 'object') {
+      for (const [name, addresses] of Object.entries(rawData)) {
+        addInterface(name, addresses as any[]);
       }
     }
 
@@ -586,7 +631,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     if (addr && addr.address && !addr.internal) {
       return 'up';
     }
-    
+
     // 内部接口（如回环）通常也是活跃的
     if (addr && addr.internal && addr.address) {
       return 'up';
@@ -600,23 +645,23 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
    */
   private inferInterfaceType(name: string): 'ethernet' | 'wifi' | 'loopback' | 'virtual' | 'other' {
     const lowerName = name.toLowerCase();
-    
+
     if (lowerName.includes('lo') || lowerName.includes('loopback')) {
       return 'loopback';
     }
-    
+
     if (lowerName.includes('wifi') || lowerName.includes('wlan') || lowerName.includes('wireless')) {
       return 'wifi';
     }
-    
+
     if (lowerName.includes('eth') || lowerName.includes('en')) {
       return 'ethernet';
     }
-    
+
     if (lowerName.includes('virt') || lowerName.includes('docker') || lowerName.includes('br-')) {
       return 'virtual';
     }
-    
+
     return 'other';
   }
 
@@ -639,12 +684,12 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     if (typeof value === 'number') {
       return isNaN(value) ? 0 : value;
     }
-    
+
     if (typeof value === 'string') {
       const parsed = parseFloat(value);
       return isNaN(parsed) ? 0 : parsed;
     }
-    
+
     return 0;
   }
 
@@ -681,7 +726,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
       // 对于同步版本，返回基本的网络接口信息
       const os = require('os');
       const interfaces = os.networkInterfaces();
-      
+
       const result: any[] = [];
       for (const [name, addresses] of Object.entries(interfaces)) {
         if (Array.isArray(addresses) && addresses.length > 0) {
@@ -700,7 +745,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
           });
         }
       }
-      
+
       return result;
     } catch (error) {
       return 'not supported';

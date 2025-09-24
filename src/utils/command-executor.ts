@@ -8,7 +8,7 @@ const execAsync = promisify(exec);
 
 /**
  * 命令执行器
- * 
+ *
  * 负责在不同平台上执行系统命令，提供统一的接口和错误处理
  */
 export class CommandExecutor {
@@ -98,6 +98,21 @@ export class CommandExecutor {
         );
       }
 
+      const timeoutMs = mergedOptions.timeout ?? this.defaultOptions.timeout ?? 10000;
+
+      if (error.name === 'AbortError' || error.code === 'ABORT_ERR' || error.code === 'ERR_CANCELED') {
+        throw new MonitorError(
+          `Command timed out after ${timeoutMs}ms`,
+          ErrorCode.TIMEOUT,
+          this.platform,
+          {
+            command,
+            executionTime,
+            timeout: timeoutMs
+          }
+        );
+      }
+
       // 命令执行失败但有输出
       const result: CommandResult = {
         stdout: error.stdout || '',
@@ -134,7 +149,7 @@ export class CommandExecutor {
    */
   async executeMultiple(commands: string[], options: ExecuteOptions = {}): Promise<CommandResult[]> {
     const results: CommandResult[] = [];
-    
+
     for (const command of commands) {
       try {
         const result = await this.execute(command, options);
@@ -160,7 +175,7 @@ export class CommandExecutor {
    * 并发执行多个命令
    */
   async executeConcurrent(commands: string[], options: ExecuteOptions = {}): Promise<CommandResult[]> {
-    const promises = commands.map(command => 
+    const promises = commands.map(command =>
       this.execute(command, options).catch(error => {
         // 转换错误为结果对象
         return {
@@ -189,16 +204,33 @@ export class CommandExecutor {
     const startTime = Date.now();
 
     return new Promise((resolve, reject) => {
-      const args = command.split(' ');
-      const cmd = args[0];
-      const cmdArgs = args.slice(1);
-
-      const child = spawn(cmd, cmdArgs, {
+      const spawnOptions: any = {
         shell: mergedOptions.shell,
         env: mergedOptions.env,
         cwd: mergedOptions.cwd,
         timeout: mergedOptions.timeout
-      });
+      };
+
+      let child: ReturnType<typeof spawn>;
+
+      if (spawnOptions.shell) {
+        child = spawn(command, spawnOptions);
+      } else {
+        const tokens = this.tokenizeCommand(command);
+        const executable = tokens.shift();
+
+        if (!executable) {
+          reject(new MonitorError(
+            'Invalid command provided for execution',
+            ErrorCode.INVALID_CONFIG,
+            this.platform,
+            { command }
+          ));
+          return;
+        }
+
+        child = spawn(executable, tokens, spawnOptions);
+      }
 
       let stdout = '';
       let stderr = '';
@@ -258,8 +290,8 @@ export class CommandExecutor {
    * 检查命令是否可用
    */
   async isCommandAvailable(command: string): Promise<boolean> {
-    const testCommand = this.platform === 'win32' 
-      ? `where ${command}` 
+    const testCommand = this.platform === 'win32'
+      ? `where ${command}`
       : `which ${command}`;
 
     try {
@@ -322,6 +354,25 @@ export class CommandExecutor {
     return [command, ...escapedArgs].join(' ');
   }
 
+  private tokenizeCommand(command: string): string[] {
+    const matches = command.match(/"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'|[^\s]+/g);
+    if (!matches) {
+      return [];
+    }
+
+    return matches.map(token => {
+      const startsWithQuote = token.startsWith('"') || token.startsWith("'");
+      const endsWithQuote = token.endsWith('"') || token.endsWith("'");
+
+      if (startsWithQuote && endsWithQuote && token.length >= 2) {
+        const unquoted = token.slice(1, -1);
+        return unquoted.replace(/\\([\\'" ])/g, '$1');
+      }
+
+      return token;
+    });
+  }
+
   /**
    * 带超时执行命令
    */
@@ -334,12 +385,18 @@ export class CommandExecutor {
         ...options,
         signal: controller.signal
       };
-      
-      // 确保shell选项正确设置
+
+      // 确保 shell 选项在不同平台下正确设置
       if (execOptions.shell === true) {
-        execOptions.shell = '/bin/bash';
+        if (process.platform === 'win32') {
+          execOptions.shell = process.env.ComSpec || 'cmd.exe';
+        } else {
+          // 尝试使用当前 SHELL，若不存在再回退到常见 POSIX shell
+          const fallbackShells = [process.env.SHELL, '/bin/bash', '/bin/sh'];
+          execOptions.shell = fallbackShells.find(Boolean);
+        }
       }
-      
+
       const result = await execAsync(command, execOptions);
       clearTimeout(timeoutId);
       return result;

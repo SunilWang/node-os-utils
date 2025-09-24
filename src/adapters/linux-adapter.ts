@@ -7,7 +7,7 @@ import { MonitorError, ErrorCode } from '../types/errors';
 
 /**
  * Linux 平台适配器
- * 
+ *
  * 实现 Linux 系统的监控功能，主要通过 /proc、/sys 文件系统和系统命令
  */
 export class LinuxAdapter extends BasePlatformAdapter {
@@ -85,7 +85,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取 CPU 信息
+   * 读取 /proc/cpuinfo 并解析成结构化 CPU 信息
    */
   async getCPUInfo(): Promise<any> {
     try {
@@ -97,7 +97,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取 CPU 使用率
+   * 读取 /proc/stat，计算总体 CPU 使用情况
    */
   async getCPUUsage(): Promise<any> {
     try {
@@ -109,7 +109,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取 CPU 温度
+   * 遍历 /sys/class/thermal，聚合 CPU 温度传感器
    */
   async getCPUTemperature(): Promise<any> {
     try {
@@ -151,7 +151,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取内存信息
+   * 读取 /proc/meminfo 解析内存占用
    */
   async getMemoryInfo(): Promise<any> {
     try {
@@ -413,7 +413,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
   private parseCPUUsage(content: string): any {
     const lines = content.split('\n');
     const cpuLine = lines.find(line => line.startsWith('cpu '));
-    
+
     if (!cpuLine) {
       throw this.createParseError(content, 'CPU usage line not found');
     }
@@ -437,7 +437,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
 
   private parseMemoryInfo(content: string): any {
     const memInfo = this.parseKeyValueOutput(content);
-    
+
     const total = this.convertToBytes(memInfo['MemTotal'] || '0', 'kB');
     const available = this.convertToBytes(memInfo['MemAvailable'] || memInfo['MemFree'] || '0', 'kB');
     const free = this.convertToBytes(memInfo['MemFree'] || '0', 'kB');
@@ -466,12 +466,12 @@ export class LinuxAdapter extends BasePlatformAdapter {
     if (lines.length < 2) return [];
 
     const disks: any[] = [];
-    
+
     for (let i = 1; i < lines.length; i++) {
       const fields = lines[i].split(/\s+/);
       if (fields.length >= 6) {
         const [filesystem, size, used, available, usagePercent, mountpoint] = fields;
-        
+
         disks.push({
           filesystem,
           mountpoint,
@@ -487,6 +487,10 @@ export class LinuxAdapter extends BasePlatformAdapter {
   }
 
 
+  /**
+   * 解析 ip/ifconfig 输出的网卡信息
+   * 会去除行首缩进以兼容 " ip addr" 的缩进格式
+   */
   private parseNetworkInterfaces(output: string): any {
     const interfaces: any[] = [];
     const blocks = output.split(/^\d+:/m);
@@ -495,7 +499,8 @@ export class LinuxAdapter extends BasePlatformAdapter {
       if (!block.trim()) continue;
 
       const lines = block.split('\n');
-      const interfaceMatch = lines[0]?.match(/^(\w+):/);
+      const header = lines[0]?.trim() || '';
+      const interfaceMatch = header.match(/^(\w+):/);
       if (!interfaceMatch) continue;
 
       const name = interfaceMatch[1];
@@ -565,6 +570,11 @@ export class LinuxAdapter extends BasePlatformAdapter {
     return interfaces;
   }
 
+  /**
+   * 解析 /proc/net/dev 网络统计数据
+   *
+   * 将原始列按接口拆分，并提取收发字节/错误/丢包等指标
+   */
   private parseNetworkStats(content: string): any {
     const lines = content.split('\n');
     const stats: any[] = [];
@@ -603,7 +613,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
       const fields = line.trim().split(/\s+/);
       if (fields.length >= 7) {
         const [pid, ppid, cmd, pcpu, pmem, state, user, ...cmdParts] = fields;
-        
+
         processes.push({
           pid: this.safeParseInt(pid),
           ppid: this.safeParseInt(ppid),
@@ -619,6 +629,9 @@ export class LinuxAdapter extends BasePlatformAdapter {
     return processes;
   }
 
+  /**
+   * 综合 /proc/[pid] 下多份文件，拼装进程详细信息
+   */
   private parseProcessInfo(pid: number, stat: string, status: string, cmdline: string): any {
     const statusInfo = this.parseKeyValueOutput(status, '\t');
     const statFields = stat.split(' ');

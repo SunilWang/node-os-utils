@@ -4,13 +4,13 @@
  */
 
 import { expect } from 'chai'
-import { 
-  PlatformUtils, 
-  TestValidators, 
+import {
+  PlatformUtils,
+  TestValidators,
   TestAssertions,
-  asyncTest, 
+  asyncTest,
   longTest,
-  PerformanceMonitor 
+  PerformanceMonitor
 } from '../utils/test-base'
 import { LinuxTestUtils, CrossPlatformValidator } from '../utils/platform-specific'
 import { OSUtils } from '../../src'
@@ -24,7 +24,7 @@ describe('Linux System Tests', function() {
   })
 
   let osu: OSUtils
-  
+
   before(function() {
     // 使用新版本2.0 API
     osu = new OSUtils()
@@ -41,7 +41,7 @@ describe('Linux System Tests', function() {
     describe('#info()', function() {
       it('应该能够从/proc/cpuinfo读取CPU信息', asyncTest(async function() {
         const result = await osu.cpu.info()
-        
+
         expect(result.success).to.be.true
         if (result.success) {
           expect(result.data).to.exist
@@ -55,7 +55,7 @@ describe('Linux System Tests', function() {
     describe('#loadAverage()', function() {
       it('应该能够正确读取Linux的负载平均值', asyncTest(async function() {
         const result = await osu.cpu.loadAverage()
-        
+
         expect(result.success).to.be.true
         if (result.success) {
           expect(result.data).to.exist
@@ -71,7 +71,7 @@ describe('Linux System Tests', function() {
         }
 
         const result = await osu.cpu.loadAverage()
-        
+
         if (!result.success) {
           this.skip()
         }
@@ -100,7 +100,7 @@ describe('Linux System Tests', function() {
     describe('#usage()', function() {
       it('应该能够从/proc/stat获取CPU使用率', asyncTest(async function() {
         const result = await osu.cpu.usage()
-        
+
         if (!result.success) {
           this.skip()
         }
@@ -118,7 +118,7 @@ describe('Linux System Tests', function() {
     describe('#info()', function() {
       it('应该能够从/proc/meminfo读取内存信息', asyncTest(async function() {
         const result = await osu.memory.info()
-        
+
         expect(result.success).to.be.true
         if (result.success) {
           expect(result.data).to.exist
@@ -135,7 +135,7 @@ describe('Linux System Tests', function() {
         }
 
         const result = await osu.memory.info()
-        
+
         if (!result.success) {
           this.skip()
         }
@@ -145,7 +145,7 @@ describe('Linux System Tests', function() {
         try {
           const procMeminfo = fs.readFileSync('/proc/meminfo', 'utf8')
           const memTotalMatch = procMeminfo.match(/MemTotal:\s+(\d+)\s+kB/)
-          
+
           if (memTotalMatch) {
             const procTotal = parseInt(memTotalMatch[1]) * 1024 // 转换为字节
             const tolerance = 0.01 // 1%的误差
@@ -163,7 +163,7 @@ describe('Linux System Tests', function() {
     describe('#usage()', function() {
       it('Linux系统的空闲和已用内存信息应该准确', asyncTest(async function() {
         const result = await osu.memory.usage()
-        
+
         if (!result.success) {
           this.skip()
         }
@@ -181,11 +181,11 @@ describe('Linux System Tests', function() {
     describe('#info()', function() {
       it('应该能够使用df命令获取磁盘信息', asyncTest(async function() {
         const result = await osu.disk.info()
-        
+
         expect(result.success).to.be.true
         if (result.success) {
           expect(result.data).to.be.an('array')
-          
+
           if (result.data.length > 0) {
             const disk = result.data[0]
             expect(disk.filesystem).to.be.a('string')
@@ -199,7 +199,7 @@ describe('Linux System Tests', function() {
 
       it('应该支持指定挂载点', asyncTest(async function() {
         const result = await osu.disk.info()  // Remove parameter since method doesn't accept it
-        
+
         if (!result.success) {
           this.skip()
         }
@@ -207,7 +207,7 @@ describe('Linux System Tests', function() {
         if (result.success) {
           expect(result.data).to.be.an('array')
           expect(result.data.length).to.be.at.least(1)
-          
+
           const rootDisk = result.data.find(d => d.mountpoint === '/')
           expect(rootDisk).to.exist
         }
@@ -215,11 +215,11 @@ describe('Linux System Tests', function() {
 
       it('应该能够处理多个文件系统', asyncTest(async function() {
         const result = await osu.disk.info()
-        
+
         expect(result.success).to.be.true
         if (result.success) {
           expect(result.data).to.be.an('array')
-          
+
           // Linux 系统通常有多个挂载点
           const mountPoints = result.data.map(d => d.mountpoint)
           expect(mountPoints).to.include('/')
@@ -232,11 +232,11 @@ describe('Linux System Tests', function() {
     describe('#interfaces()', function() {
       it('应该能够从/proc/net/dev读取网络统计', asyncTest(async function() {
         const result = await osu.network.interfaces()
-        
+
         expect(result.success).to.be.true
         if (result.success) {
           expect(result.data).to.be.an('array')
-          
+
           if (result.data.length > 0) {
             const iface = result.data[0]
             expect(iface.name).to.be.a('string')
@@ -248,7 +248,7 @@ describe('Linux System Tests', function() {
 
       it('网络统计应该包含常见的Linux网络接口', asyncTest(async function() {
         const result = await osu.network.interfaces()
-        
+
         if (!result.success || result.data.length === 0) {
           this.skip()
         }
@@ -256,7 +256,7 @@ describe('Linux System Tests', function() {
         if (result.success) {
           const interfaceNames = result.data.map(i => i.name)
           const commonLinuxInterfaces = ['lo', 'eth0', 'wlan0', 'enp0s3', 'docker0']
-          
+
           // 应该至少包含本地回环接口
           expect(interfaceNames.some(name => name === 'lo')).to.be.true
         }
@@ -266,7 +266,7 @@ describe('Linux System Tests', function() {
     describe('#overview()', function() {
       it('应该能够计算网络流量差值', asyncTest(async function() {
         const result = await osu.network.overview()
-        
+
         if (!result.success) {
           this.skip()
         }
@@ -285,7 +285,7 @@ describe('Linux System Tests', function() {
   describe('Linux System Commands', function() {
     it('应该能够访问Linux特有的系统命令', asyncTest(async function() {
       const result = await osu.system.info()
-      
+
       expect(result.success).to.be.true
       if (result.success) {
         expect(result.data).to.exist
@@ -299,7 +299,7 @@ describe('Linux System Tests', function() {
       }
 
       const result = await osu.system.info()
-      
+
       expect(result.success).to.be.true
       if (result.success) {
         expect(result.data.hostname).to.be.a('string')
@@ -310,13 +310,13 @@ describe('Linux System Tests', function() {
   describe('Linux Performance Tests', function() {
     it('Linux系统调用应该在合理时间内完成', longTest(async function() {
       const monitor = new PerformanceMonitor()
-      
+
       await monitor.time('cpu-info', () => osu.cpu.info())
       await monitor.time('memory-info', () => osu.memory.info())
       await monitor.time('disk-info', () => osu.disk.info())
-      
+
       const report = monitor.getReport()
-      
+
       // Linux 系统调用应该在合理时间内完成
       expect(report['cpu-info']).to.be.below(1000, 'CPU info should complete within 1s')
       expect(report['memory-info']).to.be.below(1000, 'Memory info should complete within 1s')
@@ -326,15 +326,15 @@ describe('Linux System Tests', function() {
     it('重复调用不应该影响系统性能', longTest(async function() {
       const iterations = 10
       const monitor = new PerformanceMonitor()
-      
+
       for (let i = 0; i < iterations; i++) {
         await monitor.time(`cpu-usage-${i}`, () => osu.cpu.usage())
       }
-      
+
       const times = Array.from({ length: iterations }, (_, i) => monitor.getReport()[`cpu-usage-${i}`])
       const avgTime = times.reduce((sum, time) => sum + time, 0) / times.length
       const maxTime = Math.max(...times)
-      
+
       // 如果平均时间为0或非常小，检查所有时间都应该在合理范围内（<100ms）
       if (avgTime < 1) {
         expect(maxTime).to.be.below(100, 'Even with caching, operations should complete within 100ms')
@@ -349,7 +349,7 @@ describe('Linux System Tests', function() {
     it('应该正确处理权限不足的情况', asyncTest(async function() {
       // 尝试访问需要特殊权限的功能
       const result = await osu.process.list()
-      
+
       if (!result.success) {
         expect(result.error).to.exist
         expect(result.error!.code).to.be.oneOf(['PERMISSION_DENIED', 'NOT_SUPPORTED'])
@@ -358,7 +358,7 @@ describe('Linux System Tests', function() {
 
     it('应该处理不存在的挂载点', asyncTest(async function() {
       const result = await osu.disk.info()  // Remove parameter since method doesn't accept it
-      
+
       if (!result.success) {
         expect(result.error).to.exist
         expect(result.error!.code).to.be.oneOf(['NOT_FOUND', 'INVALID_PATH'])

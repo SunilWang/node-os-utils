@@ -4,7 +4,7 @@ import { MonitorError } from '../types/errors';
 
 /**
  * 平台适配器抽象基类
- * 
+ *
  * 为不同操作系统提供统一的接口，子类需要实现具体的平台相关逻辑
  */
 export abstract class BasePlatformAdapter implements PlatformAdapter {
@@ -34,7 +34,7 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
 
     const [category, featureName] = parts;
     const categoryFeatures = this.supportedFeatures[category as keyof SupportedFeatures];
-    
+
     if (!categoryFeatures) {
       return false;
     }
@@ -309,7 +309,7 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
 
       const key = trimmed.substring(0, separatorIndex).trim();
       const value = trimmed.substring(separatorIndex + separator.length).trim();
-      
+
       if (key && value) {
         result[key] = value;
       }
@@ -340,7 +340,7 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
       if (values.length === 0) continue;
 
       const row: Record<string, string> = {};
-      
+
       if (headers.length > 0) {
         // 使用表头作为键
         for (let i = 0; i < Math.min(headers.length, values.length); i++) {
@@ -370,9 +370,12 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
   /**
    * 字节单位转换
    */
+  /**
+   * 将带单位的容量统一换算为字节，支持 SI 与二进制后缀
+   */
   protected convertToBytes(value: string | number, unit?: string): number {
     const num = typeof value === 'string' ? this.safeParseNumber(value) : value;
-    
+
     if (!unit) {
       // 尝试从值中提取单位
       if (typeof value === 'string') {
@@ -391,21 +394,25 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
       'k': 1024,
       'kb': 1024,
       'kib': 1024,
+      'ki': 1024,
       'kilobyte': 1024,
       'kilobytes': 1024,
       'm': 1024 * 1024,
       'mb': 1024 * 1024,
       'mib': 1024 * 1024,
+      'mi': 1024 * 1024,
       'megabyte': 1024 * 1024,
       'megabytes': 1024 * 1024,
       'g': 1024 * 1024 * 1024,
       'gb': 1024 * 1024 * 1024,
       'gib': 1024 * 1024 * 1024,
+      'gi': 1024 * 1024 * 1024,
       'gigabyte': 1024 * 1024 * 1024,
       'gigabytes': 1024 * 1024 * 1024,
       't': 1024 * 1024 * 1024 * 1024,
       'tb': 1024 * 1024 * 1024 * 1024,
       'tib': 1024 * 1024 * 1024 * 1024,
+      'ti': 1024 * 1024 * 1024 * 1024,
       'terabyte': 1024 * 1024 * 1024 * 1024,
       'terabytes': 1024 * 1024 * 1024 * 1024
     };

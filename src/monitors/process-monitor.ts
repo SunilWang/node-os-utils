@@ -1,8 +1,8 @@
 import { BaseMonitor } from '../core/base-monitor';
-import { 
-  MonitorResult, 
+import {
+  MonitorResult,
   ProcessConfig,
-  ProcessInfo, 
+  ProcessInfo,
   ProcessId,
   DataSize
 } from '../types';
@@ -11,7 +11,7 @@ import { CacheManager } from '../core/cache-manager';
 
 /**
  * 进程监控器
- * 
+ *
  * 提供进程相关的监控功能，包括进程列表、进程信息、资源使用等
  */
 export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
@@ -36,20 +36,21 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
   /**
    * 获取所有进程列表
    */
-  async list(): Promise<MonitorResult<ProcessInfo[]>> {
-    const cacheKey = `process-list-${this.processConfig.maxResults || 'all'}`;
-    
+  async list(options: { skipLimit?: boolean } = {}): Promise<MonitorResult<ProcessInfo[]>> {
+    const limitKey = options.skipLimit ? 'all' : (this.processConfig.maxResults || 'all');
+    const cacheKey = `process-list-${limitKey}`;
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('process.list');
-        
+
         const rawData = await this.adapter.getProcessList();
         const processes = this.transformProcessList(rawData);
-        
+
         // 应用过滤和限制
-        const filteredProcesses = this.applyFilters(processes);
-        
+        const filteredProcesses = this.applyFilters(processes, options);
+
         return filteredProcesses;
       },
       this.processConfig.cacheTTL || 5000
@@ -61,18 +62,18 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
    */
   async byPid(pid: ProcessId): Promise<MonitorResult<ProcessInfo | null>> {
     const cacheKey = `process-${pid}`;
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('process.info');
-        
+
         const rawData = await this.adapter.getProcessInfo(pid);
-        
+
         if (!rawData) {
           return null;
         }
-        
+
         return this.transformProcessInfo(rawData);
       },
       this.processConfig.cacheTTL || 2000
@@ -83,13 +84,13 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
    * 根据进程名称搜索进程
    */
   async byName(name: string): Promise<MonitorResult<ProcessInfo[]>> {
-    const listResult = await this.list();
-    
+    const listResult = await this.list({ skipLimit: true });
+
     if (!listResult.success || !listResult.data) {
       return listResult;
     }
 
-    const matchingProcesses = listResult.data.filter(process => 
+    const matchingProcesses = listResult.data.filter(process =>
       process.name.toLowerCase().includes(name.toLowerCase()) ||
       process.command.toLowerCase().includes(name.toLowerCase())
     );
@@ -114,8 +115,8 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
       );
     }
 
-    const listResult = await this.list();
-    
+    const listResult = await this.list({ skipLimit: true });
+
     if (!listResult.success || !listResult.data) {
       return listResult;
     }
@@ -128,8 +129,8 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
    * 获取进程树
    */
   async tree(rootPid?: ProcessId): Promise<MonitorResult<any>> {
-    const listResult = await this.list();
-    
+    const listResult = await this.list({ skipLimit: true });
+
     if (!listResult.success || !listResult.data) {
       return listResult as MonitorResult<any>;
     }
@@ -142,8 +143,8 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
    * 获取最占用 CPU 的进程
    */
   async topByCpu(limit: number = 10): Promise<MonitorResult<ProcessInfo[]>> {
-    const listResult = await this.list();
-    
+    const listResult = await this.list({ skipLimit: true });
+
     if (!listResult.success || !listResult.data) {
       return listResult;
     }
@@ -160,8 +161,8 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
    * 获取最占用内存的进程
    */
   async topByMemory(limit: number = 10): Promise<MonitorResult<ProcessInfo[]>> {
-    const listResult = await this.list();
-    
+    const listResult = await this.list({ skipLimit: true });
+
     if (!listResult.success || !listResult.data) {
       return listResult;
     }
@@ -189,12 +190,12 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
     totalMemoryUsage: DataSize;
   }>> {
     const cacheKey = 'process-stats';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
-        const listResult = await this.list();
-        
+    const listResult = await this.list({ skipLimit: true });
+
         if (!listResult.success || !listResult.data) {
           throw new Error('Failed to get process list for statistics');
         }
@@ -267,7 +268,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
   async kill(pid: ProcessId, signal: string = 'SIGTERM'): Promise<MonitorResult<boolean>> {
     try {
       this.validatePlatformSupport('process.kill');
-      
+
       const result = await this.adapter.killProcess(pid, signal);
       return this.createSuccessResult(result);
     } catch (error) {
@@ -286,12 +287,12 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
     }
 
     const cacheKey = `process-openfiles-${pid}`;
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('process.openFiles');
-        
+
         const rawData = await this.adapter.getProcessOpenFiles(pid);
         return rawData || [];
       },
@@ -310,12 +311,12 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
     }
 
     const cacheKey = `process-env-${pid}`;
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('process.environment');
-        
+
         const rawData = await this.adapter.getProcessEnvironment(pid);
         return rawData || {};
       },
@@ -442,12 +443,12 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
   /**
    * 应用过滤器
    */
-  private applyFilters(processes: ProcessInfo[]): ProcessInfo[] {
+  private applyFilters(processes: ProcessInfo[], options: { skipLimit?: boolean } = {}): ProcessInfo[] {
     let filtered = [...processes];
 
     // PID 过滤
     if (this.processConfig.pids && this.processConfig.pids.length > 0) {
-      filtered = filtered.filter(process => 
+      filtered = filtered.filter(process =>
         this.processConfig.pids!.includes(process.pid)
       );
     }
@@ -455,14 +456,14 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
     // 名称过滤
     if (this.processConfig.nameFilter) {
       const filter = this.processConfig.nameFilter.toLowerCase();
-      filtered = filtered.filter(process => 
+      filtered = filtered.filter(process =>
         process.name.toLowerCase().includes(filter) ||
         process.command.toLowerCase().includes(filter)
       );
     }
 
     // 限制结果数量
-    if (this.processConfig.maxResults && this.processConfig.maxResults > 0) {
+    if (!options.skipLimit && this.processConfig.maxResults && this.processConfig.maxResults > 0) {
       filtered = filtered.slice(0, this.processConfig.maxResults);
     }
 
@@ -479,7 +480,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
     // 建立进程映射
     for (const process of processes) {
       processMap.set(process.pid, process);
-      
+
       if (!childrenMap.has(process.ppid)) {
         childrenMap.set(process.ppid, []);
       }
@@ -492,7 +493,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
       if (!process) return null;
 
       const children = childrenMap.get(pid) || [];
-      
+
       return {
         ...process,
         children: children.map(child => buildNode(child.pid)).filter(child => child !== null)
@@ -505,7 +506,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
 
     // 返回所有根进程（ppid 不在进程列表中的进程）
     const rootProcesses: any[] = [];
-    
+
     for (const process of processes) {
       if (!processMap.has(process.ppid)) {
         rootProcesses.push(buildNode(process.pid));
@@ -524,7 +525,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
     }
 
     const normalizedState = state.toLowerCase().trim();
-    
+
     // Linux 状态码
     if (normalizedState === 'r' || normalizedState.includes('running')) {
       return 'running';
@@ -586,12 +587,12 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
     if (typeof value === 'number') {
       return isNaN(value) ? 0 : value;
     }
-    
+
     if (typeof value === 'string') {
       const parsed = parseFloat(value);
       return isNaN(parsed) ? 0 : parsed;
     }
-    
+
     return 0;
   }
 }

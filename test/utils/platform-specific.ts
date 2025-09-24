@@ -58,7 +58,7 @@ export class LinuxTestUtils {
    */
   static validateMemoryInfo(info: any): boolean {
     const requiredFields = ['totalMemMb', 'usedMemMb', 'freeMemMb', 'usedMemPercentage', 'freeMemPercentage']
-    return requiredFields.every(field => 
+    return requiredFields.every(field =>
       info.hasOwnProperty(field) && TestValidators.isValidNumber(parseFloat(info[field]))
     )
   }
@@ -80,7 +80,7 @@ export class MacOSTestUtils {
    * 验证macOS的vm_stat输出格式
    */
   static validateVmStatOutput(output: string): boolean {
-    return output.includes('Pages free:') && 
+    return output.includes('Pages free:') &&
            output.includes('Pages active:') &&
            output.includes('Pages inactive:')
   }
@@ -113,7 +113,7 @@ export class MacOSTestUtils {
    */
   static validateDiskInfo(info: any): boolean {
     const requiredFields = ['totalGb', 'usedGb', 'freeGb', 'usedPercentage', 'freePercentage']
-    return requiredFields.every(field => 
+    return requiredFields.every(field =>
       info.hasOwnProperty(field) && TestValidators.isValidNumber(parseFloat(info[field]))
     )
   }
@@ -144,7 +144,7 @@ export class WindowsTestUtils {
   static validateLoadAverage(loads: number[]): boolean {
     // Windows上可能返回[0,0,0]或"not supported"
     if (!Array.isArray(loads)) return false
-    return loads.length === 3 && loads.every(load => 
+    return loads.length === 3 && loads.every(load =>
       TestValidators.isValidNumber(load) && load >= 0
     )
   }
@@ -174,7 +174,7 @@ export class WindowsTestUtils {
    */
   static validateMemoryInfo(info: any): boolean {
     const requiredFields = ['totalMemMb', 'usedMemMb', 'freeMemMb']
-    return requiredFields.every(field => 
+    return requiredFields.every(field =>
       info.hasOwnProperty(field) && TestValidators.isValidNumber(parseFloat(info[field]))
     )
   }
@@ -184,7 +184,7 @@ export class WindowsTestUtils {
    */
   static validateDiskInfo(info: any): boolean {
     const requiredFields = ['totalGb', 'usedGb', 'freeGb']
-    return requiredFields.every(field => 
+    return requiredFields.every(field =>
       info.hasOwnProperty(field) && TestValidators.isValidNumber(parseFloat(info[field]))
     )
   }
@@ -258,7 +258,7 @@ export class PlatformTestDataGenerator {
   static generatePlatformTestCases() {
     const platform = PlatformUtils.getCurrentPlatform()
     const platformName = PlatformUtils.getPlatformName()
-    
+
     return {
       platform,
       platformName,

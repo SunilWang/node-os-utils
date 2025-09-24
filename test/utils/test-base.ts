@@ -181,7 +181,7 @@ export class TestAssertions {
    */
   static assertSystemInfo(info: any, requiredFields: string[]): void {
     expect(info).to.be.an('object')
-    
+
     for (const field of requiredFields) {
       // 检查属性是否存在
       expect(info).to.have.property(field)
@@ -229,12 +229,12 @@ export class TestAssertions {
    */
   static assertNetworkStats(stats: any[]): void {
     expect(stats).to.be.an('array')
-    
+
     for (const stat of stats) {
       expect(stat).to.have.property('interface')
       expect(stat).to.have.property('inputBytes')
       expect(stat).to.have.property('outputBytes')
-      
+
       expect(TestValidators.isNonEmptyString(stat.interface)).to.be.true
       expect(TestValidators.isValidNumber(parseInt(stat.inputBytes))).to.be.true
       expect(TestValidators.isValidNumber(parseInt(stat.outputBytes))).to.be.true
@@ -276,7 +276,7 @@ export class PerformanceMonitor {
    */
   assertPerformance(maxTimeMs: number = TestConfig.PERF_MAX_DURATION): void {
     const executionTime = this.getExecutionTime()
-    expect(executionTime).to.be.lessThan(maxTimeMs, 
+    expect(executionTime).to.be.lessThan(maxTimeMs,
       `Execution time ${executionTime}ms exceeded maximum ${maxTimeMs}ms`)
   }
 

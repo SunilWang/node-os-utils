@@ -1,8 +1,8 @@
 import { BaseMonitor } from '../core/base-monitor';
-import { 
-  MonitorResult, 
+import {
+  MonitorResult,
   MemoryConfig,
-  MemoryInfo, 
+  MemoryInfo,
   MemoryPressure,
   SwapInfo,
   DataSize
@@ -12,7 +12,7 @@ import { CacheManager } from '../core/cache-manager';
 
 /**
  * 内存监控器
- * 
+ *
  * 提供内存相关的监控功能，包括内存使用情况、交换空间、内存压力等
  */
 export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
@@ -32,12 +32,12 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
    */
   async info(): Promise<MonitorResult<MemoryInfo>> {
     const cacheKey = 'memory-info';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('memory.info');
-        
+
         const rawData = await this.adapter.getMemoryInfo();
         return this.transformMemoryInfo(rawData);
       },
@@ -50,16 +50,16 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
    */
   async detailed(): Promise<MonitorResult<MemoryInfo & { breakdown: any }>> {
     const cacheKey = 'memory-detailed';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('memory.detailed');
-        
+
         const rawData = await this.adapter.getMemoryInfo();
         const basicInfo = this.transformMemoryInfo(rawData);
         const breakdown = this.extractDetailedBreakdown(rawData);
-        
+
         return {
           ...basicInfo,
           breakdown
@@ -74,7 +74,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
    */
   async usage(): Promise<MonitorResult<number>> {
     const cacheKey = 'memory-usage';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -91,7 +91,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
    */
   async available(): Promise<MonitorResult<DataSize>> {
     const cacheKey = 'memory-available';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -108,7 +108,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
    */
   async usedAsync(): Promise<MonitorResult<DataSize>> {
     const cacheKey = 'memory-used';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -131,12 +131,12 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
     }
 
     const cacheKey = 'memory-swap';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('memory.swap');
-        
+
         const rawData = await this.adapter.getMemoryInfo();
         return this.transformSwapInfo(rawData);
       },
@@ -155,12 +155,12 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
     }
 
     const cacheKey = 'memory-pressure';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('memory.pressure');
-        
+
         const rawData = await this.adapter.getMemoryInfo();
         return this.calculateMemoryPressure(rawData);
       },
@@ -179,7 +179,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
     }
 
     const cacheKey = 'memory-buffers';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -198,7 +198,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
    */
   async total(): Promise<MonitorResult<DataSize>> {
     const cacheKey = 'memory-total';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -224,14 +224,14 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
     };
   }>> {
     const cacheKey = 'memory-summary';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         const rawData = await this.adapter.getMemoryInfo();
         const memInfo = this.transformMemoryInfo(rawData);
         const swapInfo = this.transformSwapInfo(rawData);
-        
+
         return {
           total: memInfo.total.toString(this.memoryConfig.unit || 'auto'),
           used: memInfo.used.toString(this.memoryConfig.unit || 'auto'),
@@ -311,8 +311,8 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
     const cached = new DataSize(this.safeParseNumber(rawData.cached));
     const buffers = new DataSize(this.safeParseNumber(rawData.buffers));
 
-    const usagePercentage = total.toBytes() > 0 
-      ? (used.toBytes() / total.toBytes()) * 100 
+    const usagePercentage = total.toBytes() > 0
+      ? (used.toBytes() / total.toBytes()) * 100
       : 0;
 
     const memInfo: MemoryInfo = {
@@ -347,13 +347,13 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
    */
   private transformSwapInfo(rawData: any): SwapInfo {
     const swapData = rawData.swap || {};
-    
+
     const total = new DataSize(this.safeParseNumber(swapData.total));
     const used = new DataSize(this.safeParseNumber(swapData.used));
     const free = new DataSize(this.safeParseNumber(swapData.free || (swapData.total - swapData.used)));
 
-    const usagePercentage = total.toBytes() > 0 
-      ? (used.toBytes() / total.toBytes()) * 100 
+    const usagePercentage = total.toBytes() > 0
+      ? (used.toBytes() / total.toBytes()) * 100
       : 0;
 
     const swapInfo: SwapInfo = {
@@ -413,14 +413,14 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
     // 否则基于使用率计算压力
     const total = this.safeParseNumber(rawData.total);
     const available = this.safeParseNumber(rawData.available || rawData.free);
-    
+
     if (total <= 0) {
       return { level: 'low', score: 0 };
     }
 
     const usagePercentage = ((total - available) / total) * 100;
     let level: 'low' | 'medium' | 'high' | 'critical';
-    
+
     if (usagePercentage >= 95) {
       level = 'critical';
     } else if (usagePercentage >= 85) {
@@ -480,7 +480,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
    */
   private normalizePressureLevel(level: string): 'low' | 'medium' | 'high' | 'critical' {
     const normalizedLevel = level.toLowerCase();
-    
+
     if (normalizedLevel.includes('critical') || normalizedLevel.includes('severe')) {
       return 'critical';
     } else if (normalizedLevel.includes('high') || normalizedLevel.includes('warn')) {
@@ -518,12 +518,12 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
     if (typeof value === 'number') {
       return isNaN(value) ? 0 : value;
     }
-    
+
     if (typeof value === 'string') {
       const parsed = parseFloat(value);
       return isNaN(parsed) ? 0 : parsed;
     }
-    
+
     return 0;
   }
 
@@ -563,11 +563,11 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
     try {
       const total = this.totalMem();
       const free = this.free();
-      
+
       if (total === 'not supported' || free === 'not supported') {
         return 'not supported';
       }
-      
+
       return (total as number) - (free as number);
     } catch (error) {
       return 'not supported';

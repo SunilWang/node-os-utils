@@ -161,4 +161,19 @@ describe('CommandExecutor Unit Tests', function() {
       })
     })
   })
+
+  describe('流式执行', function() {
+    it('应该在禁用 shell 时正确处理包含空格的命令', async function() {
+      const script = 'console.log("stream output")'
+      const command = executor.buildCommand(process.execPath, ['-e', script])
+
+      const chunks: string[] = []
+      const result = await executor.executeStream(command, (data) => {
+        chunks.push(data)
+      }, { shell: false })
+
+      expect(result.exitCode).to.equal(0)
+      expect(chunks.join('')).to.contain('stream output')
+    })
+  })
 })

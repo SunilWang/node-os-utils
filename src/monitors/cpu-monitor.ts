@@ -1,9 +1,9 @@
 import { BaseMonitor } from '../core/base-monitor';
-import { 
-  MonitorResult, 
+import {
+  MonitorResult,
   CPUConfig,
-  CPUInfo, 
-  CPUUsage, 
+  CPUInfo,
+  CPUUsage,
   LoadAverage,
   DataSize,
   Temperature,
@@ -14,7 +14,7 @@ import { CacheManager } from '../core/cache-manager';
 
 /**
  * CPU 监控器
- * 
+ *
  * 提供 CPU 相关的监控功能，包括基本信息、使用率、温度、频率等
  */
 export class CPUMonitor extends BaseMonitor<CPUInfo> {
@@ -34,12 +34,12 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    */
   async info(): Promise<MonitorResult<CPUInfo>> {
     const cacheKey = 'cpu-info';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('cpu.info');
-        
+
         const rawData = await this.adapter.getCPUInfo();
         return this.transformCPUInfo(rawData);
       },
@@ -52,12 +52,12 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    */
   async usage(): Promise<MonitorResult<number>> {
     const cacheKey = `cpu-usage-${this.cpuConfig.samplingInterval || 1000}`;
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('cpu.usage');
-        
+
         const rawData = await this.adapter.getCPUUsage();
         const usageData = this.transformCPUUsage(rawData);
         return usageData.overall;
@@ -71,12 +71,12 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    */
   async usageDetailed(): Promise<MonitorResult<CPUUsage>> {
     const cacheKey = `cpu-usage-detailed-${this.cpuConfig.samplingInterval || 1000}`;
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('cpu.usage');
-        
+
         const rawData = await this.adapter.getCPUUsage();
         return this.transformCPUUsage(rawData);
       },
@@ -89,12 +89,12 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    */
   async usageByCore(): Promise<MonitorResult<number[]>> {
     const cacheKey = `cpu-usage-cores-${this.cpuConfig.samplingInterval || 1000}`;
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('cpu.perCore');
-        
+
         const rawData = await this.adapter.getCPUUsage();
         const usageData = this.transformCPUUsage(rawData);
         return usageData.cores || [];
@@ -108,12 +108,12 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    */
   async loadAverage(): Promise<MonitorResult<LoadAverage>> {
     const cacheKey = 'cpu-loadavg';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('cpu.usage');
-        
+
         const rawData = await this.adapter.getSystemLoad();
         return this.transformLoadAverage(rawData);
       },
@@ -132,12 +132,12 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
     }
 
     const cacheKey = 'cpu-temperature';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('cpu.temperature');
-        
+
         const rawData = await this.adapter.getCPUTemperature();
         return this.transformTemperature(rawData);
       },
@@ -156,12 +156,12 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
     }
 
     const cacheKey = 'cpu-frequency';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('cpu.frequency');
-        
+
         // 频率信息通常在 CPU 基本信息中包含
         const rawData = await this.adapter.getCPUInfo();
         return this.extractFrequencyInfo(rawData);
@@ -181,12 +181,12 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
     }
 
     const cacheKey = 'cpu-cache';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('cpu.cache');
-        
+
         const rawData = await this.adapter.getCPUInfo();
         return this.extractCacheInfo(rawData);
       },
@@ -199,7 +199,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    */
   async coreCount(): Promise<MonitorResult<{ physical: number; logical: number }>> {
     const cacheKey = 'cpu-core-count';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -331,7 +331,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
       return [];
     }
 
-    return rawData.map(item => 
+    return rawData.map(item =>
       this.safeParseNumber(item.temperature || item.temp || 0)
     );
   }
@@ -408,7 +408,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
     // 如果是 CPU 数组，取第一个 CPU 的缓存信息
     if (rawData.cpus && Array.isArray(rawData.cpus) && rawData.cpus.length > 0) {
       const firstCpu = rawData.cpus[0];
-      
+
       // Linux /proc/cpuinfo 格式
       if (firstCpu['cache size']) {
         const cacheSize = this.parseCacheSize(firstCpu['cache size']);
@@ -451,12 +451,12 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
     if (typeof value === 'number') {
       return isNaN(value) ? 0 : value;
     }
-    
+
     if (typeof value === 'string') {
       const parsed = parseFloat(value);
       return isNaN(parsed) ? 0 : parsed;
     }
-    
+
     return 0;
   }
 
@@ -468,7 +468,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    */
   loadavg(): number[] | string {
     try {
-      // 尝试使用 Node.js 内置的 os.loadavg() 
+      // 尝试使用 Node.js 内置的 os.loadavg()
       const os = require('os');
       return os.loadavg();
     } catch (error) {
@@ -487,7 +487,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
       if (loads === 'not supported') {
         return 'not supported';
       }
-      
+
       const loadArray = loads as number[];
       switch (minutes) {
         case 1: return loadArray[0];

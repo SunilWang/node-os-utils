@@ -76,7 +76,7 @@ class MonitorSubscriptionImpl implements MonitorSubscription {
 
 /**
  * 基础监控器抽象类
- * 
+ *
  * 提供所有监控器的通用功能，包括缓存、事件、配置管理等
  */
 export abstract class BaseMonitor<T> extends EventEmitter {
@@ -121,7 +121,7 @@ export abstract class BaseMonitor<T> extends EventEmitter {
    */
   withConfig(config: Partial<MonitorConfig>): this {
     this.config = { ...this.config, ...config };
-    
+
     // 如果缓存配置发生变化，更新缓存管理器
     if (config.cacheTTL && this.cache) {
       this.cache.setDefaultTTL(config.cacheTTL);
@@ -236,9 +236,9 @@ export abstract class BaseMonitor<T> extends EventEmitter {
   /**
    * 获取缓存结果
    */
-  protected getCachedResult<R>(key: string): R | null {
+  protected getCachedResult<R>(key: string): R | undefined {
     if (!this.config.cacheEnabled || !this.cache) {
-      return null;
+      return undefined;
     }
     return this.cache.get<R>(key);
   }
@@ -319,7 +319,7 @@ export abstract class BaseMonitor<T> extends EventEmitter {
     try {
       // 尝试从缓存获取
       const cached = this.getCachedResult<R>(cacheKey);
-      if (cached !== null) {
+      if (cached !== undefined) {
         return this.createSuccessResult(cached, true);
       }
 
@@ -399,7 +399,7 @@ export abstract class BaseMonitor<T> extends EventEmitter {
     timeoutMs?: number
   ): Promise<R> {
     const timeout = timeoutMs || this.config.timeout || 10000;
-    
+
     return Promise.race([
       operation(),
       this.createTimeoutPromise<R>(timeout)

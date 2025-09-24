@@ -25,7 +25,7 @@ export class MonitorError extends Error {
   ) {
     super(message);
     this.name = 'MonitorError';
-    
+
     // 确保堆栈跟踪正确显示
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, MonitorError);

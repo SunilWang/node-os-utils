@@ -1,6 +1,6 @@
 /**
  * Node-OS-Utils 2.0 类型定义
- * 
+ *
  * 这里导出所有公共类型和接口
  */
 
@@ -68,7 +68,7 @@ export type {
   SupportedFeatures
 } from './platform';
 
-export { 
-  ErrorCode, 
-  MonitorError 
+export {
+  ErrorCode,
+  MonitorError
 } from './errors';

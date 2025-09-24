@@ -1,8 +1,8 @@
 import { BaseMonitor } from '../core/base-monitor';
-import { 
-  MonitorResult, 
+import {
+  MonitorResult,
   DiskConfig,
-  DiskInfo, 
+  DiskInfo,
   DiskUsage,
   DiskStats,
   MountPoint,
@@ -14,7 +14,7 @@ import { CacheManager } from '../core/cache-manager';
 
 /**
  * 磁盘监控器
- * 
+ *
  * 提供磁盘相关的监控功能，包括空间使用、I/O统计、挂载点等
  */
 export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
@@ -34,12 +34,12 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
    */
   async info(): Promise<MonitorResult<DiskInfo[]>> {
     const cacheKey = 'disk-info';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('disk.info');
-        
+
         const rawData = await this.adapter.getDiskInfo();
         return this.transformDiskInfo(rawData);
       },
@@ -52,12 +52,12 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
    */
   async infoByDevice(device: string): Promise<MonitorResult<DiskInfo | null>> {
     const allDisksResult = await this.info();
-    
+
     if (!allDisksResult.success || !allDisksResult.data) {
       return allDisksResult as MonitorResult<DiskInfo | null>;
     }
 
-    const diskInfo = allDisksResult.data.find(disk => 
+    const diskInfo = allDisksResult.data.find(disk =>
       disk.device === device || disk.mountpoint === device
     );
 
@@ -69,12 +69,12 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
    */
   async usage(): Promise<MonitorResult<DiskUsage[]>> {
     const cacheKey = 'disk-usage';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('disk.usage');
-        
+
         const rawData = await this.adapter.getDiskUsage();
         return this.transformDiskUsage(rawData);
       },
@@ -87,7 +87,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
    */
   async overallUsage(): Promise<MonitorResult<number>> {
     const usageResult = await this.usage();
-    
+
     if (!usageResult.success || !usageResult.data) {
       return usageResult as MonitorResult<number>;
     }
@@ -97,7 +97,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
     let usedBytes = 0;
 
     for (const disk of usageResult.data) {
-      if (this.diskConfig.excludeTypes && 
+      if (this.diskConfig.excludeTypes &&
           this.diskConfig.excludeTypes.includes(disk.filesystem)) {
         continue;
       }
@@ -115,7 +115,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
    */
   async usageByMountPoint(mountPoint: string): Promise<MonitorResult<DiskUsage | null>> {
     const allUsageResult = await this.usage();
-    
+
     if (!allUsageResult.success || !allUsageResult.data) {
       return allUsageResult as MonitorResult<DiskUsage | null>;
     }
@@ -135,12 +135,12 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
     }
 
     const cacheKey = 'disk-stats';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('disk.stats');
-        
+
         const rawData = await this.adapter.getDiskStats();
         return this.transformDiskStats(rawData);
       },
@@ -153,12 +153,12 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
    */
   async mounts(): Promise<MonitorResult<MountPoint[]>> {
     const cacheKey = 'disk-mounts';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('disk.mounts');
-        
+
         const rawData = await this.adapter.getMounts();
         return this.transformMountPoints(rawData);
       },
@@ -171,12 +171,12 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
    */
   async filesystems(): Promise<MonitorResult<FileSystem[]>> {
     const cacheKey = 'disk-filesystems';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('disk.filesystems');
-        
+
         const rawData = await this.adapter.getFileSystems();
         return this.transformFileSystems(rawData);
       },
@@ -195,12 +195,12 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
     disks: number;
   }>> {
     const cacheKey = 'disk-space-overview';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
         const usageResult = await this.usage();
-        
+
         if (!usageResult.success || !usageResult.data) {
           throw new Error('Failed to get disk usage data');
         }
@@ -210,7 +210,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
         let availableBytes = 0;
 
         for (const disk of usageResult.data) {
-          if (this.diskConfig.excludeTypes && 
+          if (this.diskConfig.excludeTypes &&
               this.diskConfig.excludeTypes.includes(disk.filesystem)) {
             continue;
           }
@@ -247,7 +247,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
     };
   }>> {
     const cacheKey = 'disk-health';
-    
+
     return this.executeWithCache(
       cacheKey,
       async () => {
@@ -280,10 +280,10 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
         try {
           const mountsResult = await this.mounts();
           if (mountsResult.success && mountsResult.data) {
-            const readOnlyMounts = mountsResult.data.filter(mount => 
+            const readOnlyMounts = mountsResult.data.filter(mount =>
               mount.options.includes('ro') && !mount.mountpoint.startsWith('/proc')
             );
-            
+
             if (readOnlyMounts.length > 0) {
               issues.push(`Read-only filesystems detected: ${readOnlyMounts.map(m => m.mountpoint).join(', ')}`);
               checks.mountStatus = false;
@@ -296,7 +296,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
 
         // 确定整体健康状态
         let status: 'healthy' | 'warning' | 'critical' = 'healthy';
-        
+
         if (!checks.spaceUsage || !checks.mountStatus || !checks.ioErrors) {
           status = 'critical';
         } else if (issues.length > 0) {
@@ -470,7 +470,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
   private calculateUsagePercentage(disk: any): number {
     const total = this.safeParseNumber(disk.total || disk.size);
     const used = this.safeParseNumber(disk.used);
-    
+
     if (total <= 0) {
       return 0;
     }
@@ -483,9 +483,9 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
    */
   private shouldIncludeDisk(disk: any): boolean {
     const filesystem = disk.filesystem || disk.fs || disk.type || '';
-    
+
     // 排除指定的文件系统类型
-    if (this.diskConfig.excludeTypes && 
+    if (this.diskConfig.excludeTypes &&
         this.diskConfig.excludeTypes.includes(filesystem)) {
       return false;
     }
@@ -504,14 +504,14 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
    */
   private normalizeDeviceType(type: string): 'HDD' | 'SSD' | 'NVMe' | 'eMMC' | 'Unknown' {
     if (!type) return 'Unknown';
-    
+
     const normalizedType = type.toLowerCase();
-    
+
     if (normalizedType.includes('ssd')) return 'SSD';
     if (normalizedType.includes('hdd') || normalizedType.includes('hard')) return 'HDD';
     if (normalizedType.includes('nvme')) return 'NVMe';
     if (normalizedType.includes('emmc')) return 'eMMC';
-    
+
     return 'Unknown';
   }
 
@@ -522,12 +522,12 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
     if (typeof value === 'number') {
       return isNaN(value) ? 0 : value;
     }
-    
+
     if (typeof value === 'string') {
       const parsed = parseFloat(value);
       return isNaN(parsed) ? 0 : parsed;
     }
-    
+
     return 0;
   }
 
@@ -544,7 +544,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
       // 这里返回一个基本的结构，实际值需要通过异步方法获取
       return {
         size: 0,       // 总大小
-        used: 0,       // 已用空间  
+        used: 0,       // 已用空间
         available: 0   // 可用空间
       };
     } catch (error) {
@@ -555,7 +555,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
   /**
    * 获取指定路径的已用磁盘空间（同步版本，向后兼容）
    * @param path 路径（默认为根目录）
-   * @returns 已用磁盘空间对象或 'not supported' 
+   * @returns 已用磁盘空间对象或 'not supported'
    */
   used(path: string = '/'): any {
     try {

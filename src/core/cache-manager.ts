@@ -80,7 +80,7 @@ export interface CacheManagerConfig {
 
 /**
  * 缓存管理器
- * 
+ *
  * 负责管理监控数据的缓存，提高性能并减少系统调用
  */
 export class CacheManager {
@@ -108,19 +108,27 @@ export class CacheManager {
     };
 
     // 启动定期清理
-    this.startCleanup();
+    if (this.enabled) {
+      this.startCleanup();
+    }
   }
 
   /**
    * 获取缓存值
    */
-  get<T>(key: string): T | null {
+  get<T>(key: string): T | undefined {
+    if (!this.enabled) {
+      this.stats.misses++;
+      this.updateHitRate();
+      return undefined;
+    }
+
     const item = this.cache.get(key);
 
     if (!item) {
       this.stats.misses++;
       this.updateHitRate();
-      return null;
+      return undefined;
     }
 
     // 检查是否过期
@@ -129,7 +137,7 @@ export class CacheManager {
       this.stats.misses++;
       this.stats.evictions++;
       this.updateStats();
-      return null;
+      return undefined;
     }
 
     // 更新访问统计
@@ -145,6 +153,10 @@ export class CacheManager {
    * 设置缓存值
    */
   set<T>(key: string, value: T, ttl?: number): void {
+    if (!this.enabled) {
+      return;
+    }
+
     const now = Date.now();
     const timeToLive = ttl || this.defaultTTL;
 
@@ -180,8 +192,9 @@ export class CacheManager {
    * 清空所有缓存
    */
   clear(): void {
+    const previousSize = this.cache.size;
     this.cache.clear();
-    this.stats.evictions += this.stats.size;
+    this.stats.evictions += previousSize;
     this.updateStats();
   }
 
@@ -189,6 +202,10 @@ export class CacheManager {
    * 检查是否存在缓存项
    */
   has(key: string): boolean {
+    if (!this.enabled) {
+      return false;
+    }
+
     const item = this.cache.get(key);
     if (!item) {
       return false;
@@ -287,6 +304,7 @@ export class CacheManager {
    */
   enable(): void {
     this.enabled = true;
+    this.startCleanup();
   }
 
   /**
@@ -295,6 +313,7 @@ export class CacheManager {
   disable(): void {
     this.enabled = false;
     this.clear(); // 清空现有缓存
+    this.stopCleanup();
   }
 
   /**
@@ -308,10 +327,7 @@ export class CacheManager {
    * 关闭缓存管理器
    */
   destroy(): void {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = undefined;
-    }
+    this.stopCleanup();
     this.clear();
   }
 
@@ -319,15 +335,27 @@ export class CacheManager {
    * 启动定期清理
    */
   private startCleanup(): void {
+    if (this.cleanupTimer || !this.enabled) {
+      return;
+    }
+
     this.cleanupTimer = setInterval(() => {
       this.cleanup();
     }, this.cleanupInterval);
 
-    // 确保在进程退出时清理
-    if (typeof process !== 'undefined') {
-      process.on('exit', () => this.destroy());
-      process.on('SIGINT', () => this.destroy());
-      process.on('SIGTERM', () => this.destroy());
+    // 避免定时器阻止进程退出
+    if (typeof this.cleanupTimer.unref === 'function') {
+      this.cleanupTimer.unref();
+    }
+  }
+
+  /**
+   * 停止定期清理
+   */
+  private stopCleanup(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
     }
   }
 
@@ -335,6 +363,10 @@ export class CacheManager {
    * 清理过期项
    */
   private cleanup(): void {
+    if (!this.enabled) {
+      return;
+    }
+
     const now = Date.now();
     const keysToDelete: string[] = [];
 
@@ -358,7 +390,7 @@ export class CacheManager {
    */
   private evictLRU(): void {
     let oldestKey: string | null = null;
-    let oldestTime = Date.now();
+    let oldestTime = Number.POSITIVE_INFINITY;
 
     for (const [key, item] of this.cache) {
       if (item.lastAccessed < oldestTime) {
@@ -399,7 +431,14 @@ export class CacheManager {
     for (const [key, item] of this.cache) {
       // 粗略估算：key 长度 + value 序列化长度 + 元数据
       size += key.length * 2; // UTF-16 字符
-      size += JSON.stringify(item.value).length * 2;
+      try {
+        const serialized = JSON.stringify(item.value);
+        if (typeof serialized === 'string') {
+          size += serialized.length * 2;
+        }
+      } catch {
+        // 无法序列化时忽略该项大小
+      }
       size += 64; // 元数据估算
     }
     return size;

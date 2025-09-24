@@ -6,7 +6,7 @@ import { MonitorError, ErrorCode } from '../types/errors';
 
 /**
  * macOS 平台适配器
- * 
+ *
  * 实现 macOS 系统的监控功能，主要通过 sysctl、vm_stat、system_profiler 等命令
  */
 export class MacOSAdapter extends BasePlatformAdapter {
@@ -25,7 +25,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 读取文件内容
+   * 读取文件内容，捕获并转换常见的权限/不存在错误
    */
   async readFile(path: string): Promise<string> {
     try {
@@ -33,11 +33,18 @@ export class MacOSAdapter extends BasePlatformAdapter {
       this.validateCommandResult(result, `cat ${path}`);
       return result.stdout;
     } catch (error) {
+      const err = error as NodeJS.ErrnoException & { code?: string };
+      const errorCode = err?.code === 'EACCES'
+        ? ErrorCode.PERMISSION_DENIED
+        : err?.code === 'ENOENT'
+          ? ErrorCode.FILE_NOT_FOUND
+          : ErrorCode.COMMAND_FAILED;
+
       throw new MonitorError(
         `Failed to read file: ${path}`,
-        ErrorCode.FILE_NOT_FOUND,
+        errorCode,
         this.platformName,
-        { path, error }
+        { path, error: err?.message, code: err?.code }
       );
     }
   }
@@ -55,7 +62,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取 CPU 信息
+   * 通过 sysctl 汇总 CPU 基本信息
    */
   async getCPUInfo(): Promise<any> {
     try {
@@ -78,7 +85,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取 CPU 使用率
+   * 调用 top/iostat 获取 CPU 使用率，失败时链式回退
    */
   async getCPUUsage(): Promise<any> {
     try {
@@ -99,7 +106,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取 CPU 温度
+   * 使用 powermetrics 读取温度，需要 sudo 权限
    */
   async getCPUTemperature(): Promise<any> {
     try {
@@ -114,7 +121,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取内存信息
+   * 读取 vm_stat 解析内存占用
    */
   async getMemoryInfo(): Promise<any> {
     try {
@@ -138,7 +145,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取内存使用情况
+   * 读取 vm_stat 解析内存占用
    */
   async getMemoryUsage(): Promise<any> {
     // macOS 上内存信息和使用情况来自相同来源
@@ -146,7 +153,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取磁盘信息
+   * 读取 df -h 解析磁盘占用
    */
   async getDiskInfo(): Promise<any> {
     try {
@@ -159,7 +166,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取磁盘 I/O 统计
+   * 读取 iostat -d 解析磁盘 I/O 统计
    */
   async getDiskIO(): Promise<any> {
     try {
@@ -172,7 +179,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取网络接口列表
+   * 读取 ifconfig 解析网络接口列表
    */
   async getNetworkInterfaces(): Promise<any> {
     try {
@@ -185,12 +192,12 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取网络统计信息
+   * 读取 netstat -ib 解析网络统计信息
    */
   async getNetworkStats(): Promise<any> {
     try {
-      const result = await this.executeCommand('netstat -i');
-      this.validateCommandResult(result, 'netstat -i');
+      const result = await this.executeCommand('netstat -ib');
+      this.validateCommandResult(result, 'netstat -ib');
       return this.parseNetworkStats(result.stdout);
     } catch (error) {
       throw this.createCommandError('getNetworkStats', error);
@@ -198,7 +205,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取进程列表
+   * 读取 ps -eo pid,ppid,command,pcpu,pmem,state,user 解析进程列表
    */
   async getProcesses(): Promise<any> {
     try {
@@ -211,7 +218,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取特定进程信息
+   * 读取 ps -p pid -o pid,ppid,command,pcpu,pmem,state,user,lstart 解析特定进程信息
    */
   async getProcessInfo(pid: number): Promise<any> {
     try {
@@ -224,7 +231,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取系统信息
+   * 读取 uname -a, uptime, sysctl -n vm.loadavg, sw_vers 解析系统信息
    */
   async getSystemInfo(): Promise<any> {
     try {
@@ -247,7 +254,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取系统负载
+   * 读取 sysctl -n vm.loadavg 解析系统负载
    */
   async getSystemLoad(): Promise<any> {
     try {
@@ -260,7 +267,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 初始化支持的功能
+   * 读取 sysctl -n vm.loadavg 解析系统负载
    */
   protected initializeSupportedFeatures(): SupportedFeatures {
     return {
@@ -319,7 +326,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
     };
   }
 
-  // 私有解析方法
+  // 私有解析方法，解析命令输出为结构化数据
 
   private parseCPUInfo(brand: string, cores: string, threads: string, freq: string | null): any {
     return {
@@ -335,10 +342,13 @@ export class MacOSAdapter extends BasePlatformAdapter {
     };
   }
 
+  /**
+   * 解析 top 命令输出为 CPU 使用率
+   */
   private parseCPUUsageFromTop(output: string): any {
     const lines = output.split('\n');
     const cpuLine = lines.find(line => line.includes('CPU usage:'));
-    
+
     if (!cpuLine) {
       throw this.createParseError(output, 'CPU usage line not found in top output');
     }
@@ -361,10 +371,13 @@ export class MacOSAdapter extends BasePlatformAdapter {
     };
   }
 
+  /**
+   * 解析 iostat 命令输出为 CPU 使用率
+   */
   private parseCPUUsageFromIostat(output: string): any {
     const lines = output.split('\n');
     const dataLine = lines[lines.length - 2]; // iostat 的最后一行数据
-    
+
     if (!dataLine) {
       throw this.createParseError(output, 'No data line found in iostat output');
     }
@@ -387,6 +400,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     throw this.createParseError(output, 'Unable to parse iostat CPU data');
   }
 
+  /**
+   * 解析 powermetrics 命令输出为温度
+   */
   private parseTemperatureFromPowermetrics(output: string): any {
     // powermetrics 输出解析（简化版）
     const lines = output.split('\n');
@@ -405,9 +421,12 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return temperatures;
   }
 
+  /**
+   * 解析 vm_stat 输出为内存信息
+   */
   private parseMemoryInfo(vmStat: string, totalMem: string, pressure: string | null): any {
     const total = this.safeParseInt(totalMem.trim());
-    
+
     // 解析 vm_stat 输出
     const vmLines = vmStat.split('\n');
     const pageSize = 4096; // macOS 页面大小通常是 4KB
@@ -456,6 +475,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     };
   }
 
+  /**
+   * 解析 memory_pressure 输出为内存压力
+   */
   private parseMemoryPressure(pressure: string | null): any {
     if (!pressure) {
       return { level: 'normal', score: 0 };
@@ -471,17 +493,20 @@ export class MacOSAdapter extends BasePlatformAdapter {
     }
   }
 
+  /**
+   * 解析 df -h 输出为磁盘信息
+   */
   private parseDiskInfo(output: string): any {
     const lines = output.split('\n').filter(line => line.trim());
     if (lines.length < 2) return [];
 
     const disks: any[] = [];
-    
+
     for (let i = 1; i < lines.length; i++) {
       const fields = lines[i].split(/\s+/);
       if (fields.length >= 9) {
         const [filesystem, size, used, available, capacity, /* iused */, /* ifree */, /* iusedPercent */, mountpoint] = fields;
-        
+
         disks.push({
           filesystem,
           mountpoint,
@@ -496,6 +521,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return disks;
   }
 
+  /**
+   * 解析 iostat -d 输出为磁盘 I/O 统计
+   */
   private parseDiskIO(output: string): any {
     const lines = output.split('\n').filter(line => line.trim());
     const devices: any[] = [];
@@ -507,7 +535,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
         const fields = line.trim().split(/\s+/);
         if (fields.length >= 3) {
           const [device, kbPerTransfer, transfersPerSec, mbPerSec] = fields;
-          
+
           devices.push({
             device,
             kbPerTransfer: this.safeParseNumber(kbPerTransfer),
@@ -521,6 +549,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return devices;
   }
 
+  /**
+   * 解析 ifconfig 输出为网络接口列表
+   */
   private parseNetworkInterfaces(output: string): any {
     const interfaces: any[] = [];
     const blocks = output.split(/\n(?=\w)/); // 按接口分割
@@ -581,31 +612,62 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return interfaces;
   }
 
+  /**
+   * 解析 netstat -ib/-i 输出，兼容是否包含字节列两种格式
+   */
   private parseNetworkStats(output: string): any {
     const lines = output.split('\n').filter(line => line.trim());
+    if (lines.length === 0) return [];
+
+    const header = lines[0].toLowerCase();
     const stats: any[] = [];
 
-    for (let i = 1; i < lines.length; i++) { // 跳过头部
+    for (let i = 1; i < lines.length; i++) {
       const fields = lines[i].trim().split(/\s+/);
-      if (fields.length >= 10) {
-        const [name, mtu, /* network */, /* address */, ipkts, ierrs, ibytes, opkts, oerrs, obytes] = fields;
-        
+      if (fields.length < 8) continue;
+
+      const name = fields[0];
+      const mtu = this.safeParseInt(fields[1]);
+
+      if (header.includes('ibytes') && fields.length >= 11) {
+        const tail = fields.slice(-7);
+        if (tail.length < 7) continue;
+        const [ipkts, ierrs, ibytes, opkts, oerrs, obytes, collisions] = tail;
         stats.push({
           interface: name,
-          mtu: this.safeParseInt(mtu),
+          mtu,
           rxPackets: this.safeParseInt(ipkts),
           rxErrors: this.safeParseInt(ierrs),
           rxBytes: this.safeParseInt(ibytes),
           txPackets: this.safeParseInt(opkts),
           txErrors: this.safeParseInt(oerrs),
-          txBytes: this.safeParseInt(obytes)
+          txBytes: this.safeParseInt(obytes),
+          collisions: this.safeParseInt(collisions)
         });
+        continue;
       }
+      const tail = fields.slice(-5);
+      if (tail.length < 5) continue;
+      const [ipkts, ierrs, opkts, oerrs, collisions] = tail;
+      stats.push({
+        interface: name,
+        mtu,
+        rxPackets: this.safeParseInt(ipkts),
+        rxErrors: this.safeParseInt(ierrs),
+        rxBytes: 0,
+        txPackets: this.safeParseInt(opkts),
+        txErrors: this.safeParseInt(oerrs),
+        txBytes: 0,
+        collisions: this.safeParseInt(collisions)
+      });
     }
 
     return stats;
   }
 
+  /**
+   * 解析 ps -eo pid,ppid,command,pcpu,pmem,state,user 输出为进程列表
+   */
   private parseProcessList(output: string): any {
     const lines = output.split('\n').filter(line => line.trim());
     const processes: any[] = [];
@@ -613,10 +675,10 @@ export class MacOSAdapter extends BasePlatformAdapter {
     for (let i = 1; i < lines.length; i++) { // 跳过头部
       const line = lines[i];
       const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.+?)\s+([\d.]+)\s+([\d.]+)\s+(\w+)\s+(\w+)$/);
-      
+
       if (match) {
         const [, pid, ppid, command, pcpu, pmem, state, user] = match;
-        
+
         processes.push({
           pid: this.safeParseInt(pid),
           ppid: this.safeParseInt(ppid),
@@ -632,6 +694,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return processes;
   }
 
+  /**
+   * 解析 ps -p pid -o pid,ppid,command,pcpu,pmem,state,user,lstart 输出为特定进程信息
+   */
   private parseProcessInfo(output: string, pid: number): any {
     const lines = output.split('\n').filter(line => line.trim());
     if (lines.length < 2) {
@@ -645,10 +710,10 @@ export class MacOSAdapter extends BasePlatformAdapter {
 
     const dataLine = lines[1]; // 第一行是头部
     const match = dataLine.match(/^\s*(\d+)\s+(\d+)\s+(.+?)\s+([\d.]+)\s+([\d.]+)\s+(\w+)\s+(\w+)\s+(.+)$/);
-    
+
     if (match) {
       const [, , ppid, command, pcpu, pmem, state, user, lstart] = match;
-      
+
       return {
         pid,
         ppid: this.safeParseInt(ppid),
@@ -665,9 +730,12 @@ export class MacOSAdapter extends BasePlatformAdapter {
     throw this.createParseError(output, 'Unable to parse process info');
   }
 
+  /**
+   * 解析 uname -a, uptime, sysctl -n vm.loadavg, sw_vers 输出为系统信息
+   */
   private parseSystemInfo(uname: string, uptime: string, loadavg: string, osVersion: string | null): any {
     const unameFields = uname.trim().split(' ');
-    
+
     // 解析 uptime 获取启动时间
     const uptimeMatch = uptime.match(/up\s+(.+?),/);
     const uptimeStr = uptimeMatch ? uptimeMatch[1] : '';
@@ -691,9 +759,12 @@ export class MacOSAdapter extends BasePlatformAdapter {
     };
   }
 
+  /**
+   * 解析 sysctl -n vm.loadavg 输出为系统负载
+   */
   private parseLoadAverage(output: string): any {
     const match = output.trim().match(/\{\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\}/);
-    
+
     if (match) {
       return {
         load1: this.safeParseNumber(match[1]),
@@ -705,6 +776,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     throw this.createParseError(output, 'Unable to parse load average');
   }
 
+  /**
+   * 解析 df -h 输出的大小格式转换
+   */
   private convertDfSizeToBytes(sizeStr: string): number {
     // df -h 输出的大小格式转换
     const match = sizeStr.match(/^([\d.]+)([KMGT]?)i?$/);
@@ -724,10 +798,10 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return value * (multipliers[unit] || 1024);
   }
 
-  // 实现抽象方法
+  // 实现抽象方法，获取结构化数据
 
   /**
-   * 获取磁盘使用情况
+   * 获取磁盘使用情况，解析 df -k 输出为磁盘使用情况
    */
   async getDiskUsage(): Promise<any> {
     try {
@@ -739,7 +813,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取磁盘统计
+   * 获取磁盘统计，解析 iostat -d 输出为磁盘统计
    */
   async getDiskStats(): Promise<any> {
     try {
@@ -751,7 +825,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取挂载点
+   * 获取挂载点，解析 mount 输出为挂载点
    */
   async getMounts(): Promise<any> {
     try {
@@ -763,7 +837,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取文件系统
+   * 获取文件系统，解析 diskutil list 输出为文件系统
    */
   async getFileSystems(): Promise<any> {
     try {
@@ -775,7 +849,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取网络连接
+   * 获取网络连接，解析 netstat -an 输出为网络连接
    */
   async getNetworkConnections(): Promise<any> {
     try {
@@ -787,7 +861,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取默认网关
+   * 获取默认网关，解析 route -n get default 输出为默认网关
    */
   async getDefaultGateway(): Promise<any> {
     try {
@@ -799,7 +873,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取进程列表
+   * 获取进程列表，解析 ps -eo pid,ppid,comm,%cpu,%mem,stat,user,lstart,args 输出为进程列表
    */
   async getProcessList(): Promise<any> {
     try {
@@ -811,7 +885,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 杀死进程
+   * 杀死进程，解析 kill -${signal} ${pid} 输出为杀死进程
    */
   async killProcess(pid: number, signal: string = 'TERM'): Promise<boolean> {
     try {
@@ -823,7 +897,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取进程打开文件
+   * 获取进程打开文件，解析 lsof -p ${pid} +c0 -Fn 输出为进程打开文件
    */
   async getProcessOpenFiles(pid: number): Promise<string[]> {
     try {
@@ -835,7 +909,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取进程环境变量
+   * 获取进程环境变量，解析 ps eww ${pid} 输出为进程环境变量
    */
   async getProcessEnvironment(pid: number): Promise<Record<string, string>> {
     try {
@@ -847,7 +921,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取系统运行时间
+   * 获取系统运行时间，解析 uptime 输出为系统运行时间
    */
   async getSystemUptime(): Promise<any> {
     try {
@@ -859,7 +933,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取系统用户
+   * 获取系统用户，解析 who 输出为系统用户
    */
   async getSystemUsers(): Promise<any> {
     try {
@@ -871,7 +945,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取系统服务
+   * 获取系统服务，解析 launchctl list 输出为系统服务
    */
   async getSystemServices(): Promise<any> {
     try {
@@ -882,7 +956,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
     }
   }
 
-  // 私有解析方法
+  // 私有解析方法，解析命令输出为结构化数据
 
   private parseDiskUsage(output: string): any[] {
     const lines = output.split('\n').slice(1); // 跳过标题行
@@ -906,6 +980,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return disks;
   }
 
+  /**
+   * 解析 iostat -d 输出为磁盘统计
+   */
   private parseDiskStats(output: string): any[] {
     const lines = output.split('\n').slice(2); // 跳过标题行
     const stats: any[] = [];
@@ -926,6 +1003,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return stats;
   }
 
+  /**
+   * 解析 mount 输出为挂载点
+   */
   private parseMounts(output: string): any[] {
     const lines = output.split('\n').filter(line => line.trim());
     const mounts: any[] = [];
@@ -935,7 +1015,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
       if (match) {
         const [, device, mountPoint, options] = match;
         const optionsArray = options.split(',').map(opt => opt.trim());
-        
+
         mounts.push({
           device: device.trim(),
           mountPoint: mountPoint.trim(),
@@ -950,12 +1030,15 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return mounts;
   }
 
+  /**
+   * 解析 diskutil list 输出为文件系统
+   */
   private parseFileSystems(output: string): any[] {
     const lines = output.split('\n').filter(line => line.trim());
     const filesystems: any[] = [];
 
     for (const line of lines) {
-      if (line.includes('GUID_partition_scheme') || line.includes('Apple_HFS') || 
+      if (line.includes('GUID_partition_scheme') || line.includes('Apple_HFS') ||
           line.includes('Apple_APFS') || line.includes('Microsoft Basic Data')) {
         const parts = line.trim().split(/\s+/);
         if (parts.length >= 3) {
@@ -971,6 +1054,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return filesystems;
   }
 
+  /**
+   * 解析 netstat -an 输出为网络连接
+   */
   private parseNetworkConnections(output: string): any[] {
     const lines = output.split('\n').filter(line => line.trim());
     const connections: any[] = [];
@@ -990,6 +1076,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return connections;
   }
 
+  /**
+   * 解析 route -n get default 输出为默认网关
+   */
   private parseDefaultGateway(output: string): any {
     const lines = output.split('\n');
     let gateway: string | null = null;
@@ -1009,6 +1098,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return gateway ? { gateway, interface: interfaceName || 'unknown' } : null;
   }
 
+  /**
+   * 解析 lsof -p ${pid} +c0 -Fn 输出为进程打开文件
+   */
   private parseOpenFiles(output: string): string[] {
     const lines = output.split('\n');
     const files: string[] = [];
@@ -1022,6 +1114,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return files;
   }
 
+  /**
+   * 解析 ps eww ${pid} 输出为进程环境变量
+   */
   private parseEnvironment(output: string): Record<string, string> {
     const env: Record<string, string> = {};
     const lines = output.split('\n');
@@ -1041,10 +1136,13 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return env;
   }
 
+  /**
+   * 解析 uptime 输出为系统运行时间
+   */
   private parseSystemUptime(output: string): any {
     const uptimeMatch = output.match(/up\s+(.+?),/);
     const loadMatch = output.match(/load averages:\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-    
+
     return {
       uptime: uptimeMatch ? uptimeMatch[1].trim() : 'unknown',
       loadAverage: loadMatch ? {
@@ -1055,6 +1153,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     };
   }
 
+  /**
+   * 解析 who 输出为系统用户
+   */
   private parseSystemUsers(output: string): any[] {
     const lines = output.split('\n').filter(line => line.trim());
     const users: any[] = [];
@@ -1074,6 +1175,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return users;
   }
 
+  /**
+   * 解析 launchctl list 输出为系统服务
+   */
   private parseSystemServices(output: string): any[] {
     const lines = output.split('\n').slice(1); // 跳过标题行
     const services: any[] = [];

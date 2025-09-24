@@ -12,7 +12,7 @@ export const TestGlobalConfig = {
   // 基础超时设置
   timeouts: {
     default: 10000,        // 默认测试超时 (10秒)
-    long: 30000,          // 长时间测试超时 (30秒)  
+    long: 30000,          // 长时间测试超时 (30秒)
     performance: 5000,    // 性能测试最大执行时间 (5秒)
     quick: 2000          // 快速测试超时 (2秒)
   },
@@ -58,7 +58,7 @@ export const PlatformConfigs = {
       network: 8000,              // Linux网络测试超时
       cpu: 5000                   // Linux CPU测试超时
     },
-    
+
     features: {
       procFilesystem: true,       // 支持/proc文件系统
       loadavg: true,             // 支持负载平均值
@@ -68,7 +68,7 @@ export const PlatformConfigs = {
 
     paths: {
       procMeminfo: '/proc/meminfo',
-      procCpuinfo: '/proc/cpuinfo', 
+      procCpuinfo: '/proc/cpuinfo',
       procStat: '/proc/stat',
       procLoadavg: '/proc/loadavg',
       procNetDev: '/proc/net/dev'
@@ -84,7 +84,7 @@ export const PlatformConfigs = {
   darwin: { // macOS
     timeouts: {
       memory: 10000,              // macOS内存测试超时
-      disk: 12000,                // macOS磁盘测试超时  
+      disk: 12000,                // macOS磁盘测试超时
       network: 10000,             // macOS网络测试超时
       cpu: 6000                   // macOS CPU测试超时
     },
@@ -163,11 +163,11 @@ export function getPlatformTimeout(category: string): number {
  */
 export function isFeatureSupported(feature: string): boolean {
   const config = getCurrentPlatformConfig()
-  
+
   if ('unsupportedFeatures' in config && config.unsupportedFeatures && Array.isArray(config.unsupportedFeatures)) {
     return !config.unsupportedFeatures.includes(feature)
   }
-  
+
   // 默认支持所有功能
   return true
 }
@@ -194,7 +194,7 @@ export const CIConfig = {
     process.env.TRAVIS ||
     process.env.JENKINS_URL
   ),
-  
+
   // CI环境下的特殊配置
   adjustments: {
     timeoutMultiplier: 2,         // CI环境超时时间加倍

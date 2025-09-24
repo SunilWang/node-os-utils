@@ -1,41 +1,24 @@
 import { PlatformAdapter } from '../types/platform';
 import { LinuxAdapter } from './linux-adapter';
 import { MacOSAdapter } from './macos-adapter';
+import { WindowsAdapter } from './windows-adapter';
 import { MonitorError, ErrorCode } from '../types/errors';
 
 /**
- * Windows 适配器占位符
- * 
- * Windows 支持需要更多的开发工作，暂时提供基础实现
- */
-class WindowsAdapter extends MacOSAdapter {
-  constructor() {
-    super();
-    // 重写平台名称
-    this.platformName = 'win32';
-  }
-
-  // Windows 特定实现可以在这里添加
-  // 目前继承 macOS 的基础实现作为占位符
-}
-
-/**
- * 平台适配器工厂
- * 
- * 根据运行平台自动创建合适的适配器实例
+ * 平台适配器工厂，负责实例化并缓存各操作系统的具体适配器
  */
 export class AdapterFactory {
   private static adapters: Map<string, PlatformAdapter> = new Map();
 
   /**
    * 创建平台适配器
-   * 
+   *
    * @param platform 目标平台，如果不指定则自动检测
    * @returns 平台适配器实例
    */
   static create(platform?: string): PlatformAdapter {
-    const targetPlatform = platform || this.detectPlatform();
-    
+    const targetPlatform = this.normalizePlatform(platform || this.detectPlatform());
+
     // 检查是否已有缓存的适配器实例
     if (this.adapters.has(targetPlatform)) {
       return this.adapters.get(targetPlatform)!;
@@ -77,7 +60,7 @@ export class AdapterFactory {
    * 检查是否支持指定平台
    */
   static isPlatformSupported(platform: string): boolean {
-    return this.getSupportedPlatforms().includes(platform);
+    return this.getSupportedPlatforms().includes(this.normalizePlatform(platform));
   }
 
   /**
@@ -90,7 +73,7 @@ export class AdapterFactory {
     supported: boolean;
   } {
     const platform = this.detectPlatform();
-    
+
     return {
       platform,
       arch: process.arch,
@@ -110,8 +93,8 @@ export class AdapterFactory {
    * 获取平台显示名称
    */
   static getPlatformDisplayName(platform?: string): string {
-    const targetPlatform = platform || this.detectPlatform();
-    
+    const targetPlatform = this.normalizePlatform(platform || this.detectPlatform());
+
     const displayNames: Record<string, string> = {
       'linux': 'Linux',
       'darwin': 'macOS',
@@ -139,9 +122,9 @@ export class AdapterFactory {
     };
     issues: string[];
   }> {
-    const targetPlatform = platform || this.detectPlatform();
+    const targetPlatform = this.normalizePlatform(platform || this.detectPlatform());
     const supported = this.isPlatformSupported(targetPlatform);
-    
+
     if (!supported) {
       return {
         platform: targetPlatform,
@@ -158,7 +141,7 @@ export class AdapterFactory {
     try {
       const adapter = this.create(targetPlatform);
       const capabilities = await this.testAdapterCapabilities(adapter);
-      
+
       return {
         platform: targetPlatform,
         supported: true,
@@ -202,9 +185,9 @@ export class AdapterFactory {
     supportedFeatures: Record<string, any>;
     systemInfo: any;
   }> {
-    const targetPlatform = platform || this.detectPlatform();
+    const targetPlatform = this.normalizePlatform(platform || this.detectPlatform());
     const adapter = this.create(targetPlatform);
-    
+
     try {
       const [supportedFeatures, systemInfo] = await Promise.all([
         Promise.resolve(adapter.getSupportedFeatures()),
@@ -228,7 +211,7 @@ export class AdapterFactory {
   }
 
   /**
-   * 测试适配器能力
+   * 调用适配器运行一系列命令/文件探测以判定平台能力
    */
   private static async testAdapterCapabilities(adapter: PlatformAdapter): Promise<{
     commands: string[];
@@ -243,10 +226,14 @@ export class AdapterFactory {
 
     // 测试常用命令
     const commonCommands = this.getCommonCommandsByPlatform(adapter.getPlatform());
-    
+
     for (const command of commonCommands) {
       try {
-        await adapter.executeCommand(`which ${command}`, { timeout: 3000 });
+        const executableCheck = adapter.getPlatform() === 'win32'
+          ? `where ${command}`
+          : `which ${command}`;
+
+        await adapter.executeCommand(executableCheck, { timeout: 3000 });
         capabilities.commands.push(command);
       } catch {
         // 命令不可用
@@ -255,7 +242,7 @@ export class AdapterFactory {
 
     // 测试文件访问
     const commonFiles = this.getCommonFilesByPlatform(adapter.getPlatform());
-    
+
     for (const file of commonFiles) {
       try {
         const exists = await adapter.fileExists(file);
@@ -281,7 +268,7 @@ export class AdapterFactory {
   }
 
   /**
-   * 获取平台常用命令
+   * 按平台列出诊断常用命令，用于能力自检
    */
   private static getCommonCommandsByPlatform(platform: string): string[] {
     const commands: Record<string, string[]> = {
@@ -294,7 +281,7 @@ export class AdapterFactory {
   }
 
   /**
-   * 获取平台常用文件
+   * 按平台列出监控常访问的关键文件
    */
   private static getCommonFilesByPlatform(platform: string): string[] {
     const files: Record<string, string[]> = {
@@ -320,5 +307,23 @@ export class AdapterFactory {
     };
 
     return files[platform] || [];
+  }
+
+  /**
+   * 归一化平台标识，兼容常见别名
+   * 将外部传入的平台别名归一化为 Node.js 标准 platform 值
+   */
+  private static normalizePlatform(platform: string): string {
+    const normalized = platform?.toLowerCase();
+
+    const aliases: Record<string, string> = {
+      mac: 'darwin',
+      macos: 'darwin',
+      osx: 'darwin',
+      win: 'win32',
+      windows: 'win32'
+    };
+
+    return aliases[normalized] || normalized;
   }
 }
