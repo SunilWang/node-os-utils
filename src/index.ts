@@ -13,6 +13,7 @@ import { DiskMonitor } from './monitors/disk-monitor';
 import { NetworkMonitor } from './monitors/network-monitor';
 import { ProcessMonitor } from './monitors/process-monitor';
 import { SystemMonitor } from './monitors/system-monitor';
+import packageJson from '../package.json';
 
 import {
   GlobalConfig,
@@ -354,5 +355,5 @@ export {
 export default OSUtils;
 
 // 库信息
-export const version = '2.0.0';
-export const name = 'node-os-utils';
+export const version = packageJson.version;
+export const name = packageJson.name;
