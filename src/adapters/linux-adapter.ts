@@ -611,15 +611,16 @@ export class LinuxAdapter extends BasePlatformAdapter {
 
     for (const line of lines) {
       const fields = line.trim().split(/\s+/);
-      if (fields.length >= 7) {
-        const [pid, ppid, cmd, pcpu, pmem, state, user, ...cmdParts] = fields;
+      if (fields.length >= 8) {
+        const [pid, ppid, cmd, pcpu, pmem, rss, state, user, ...cmdParts] = fields;
 
         processes.push({
           pid: this.safeParseInt(pid),
           ppid: this.safeParseInt(ppid),
           command: [cmd, ...cmdParts].join(' '),
           cpuUsage: this.safeParseNumber(pcpu),
-          memoryUsage: this.safeParseNumber(pmem),
+          memoryUsage: this.safeParseInt(rss) * 1024, // rss 以 KB 计，转换为字节
+          memoryPercentage: this.safeParseNumber(pmem),
           state,
           user
         });
@@ -769,7 +770,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
    */
   async getProcessList(): Promise<any> {
     try {
-      const result = await this.executeCommand('ps -eo pid,ppid,comm,%cpu,%mem,stat,user,args --no-headers');
+      const result = await this.executeCommand('ps -eo pid,ppid,comm,%cpu,%mem,rss,stat,user,args --no-headers');
       return this.parseProcessList(result.stdout);
     } catch (error) {
       throw this.createCommandError('getProcessList', error);

@@ -184,14 +184,20 @@ osutils.configureCache({
 所有操作都返回 `MonitorResult<T>` 对象，以保证一致的错误处理：
 
 ```typescript
-interface MonitorResult<T> {
-  success: boolean;
-  data?: T;
-  error?: MonitorError;
-  platform: string;
-  timestamp: Date;
-  cached?: boolean;
-}
+type MonitorResult<T> =
+  | {
+      success: true;
+      data: T;
+      timestamp: number;
+      cached: boolean;
+      platform: string;
+    }
+  | {
+      success: false;
+      error: MonitorError;
+      platform: string;
+      timestamp: number;
+    };
 ```
 
 ### 错误处理示例
@@ -219,13 +225,15 @@ if (result.success) {
 
 ```typescript
 enum ErrorCode {
-  PLATFORM_NOT_SUPPORTED = 'PLATFORM_NOT_SUPPORTED',
-  COMMAND_FAILED = 'COMMAND_FAILED',
-  TIMEOUT = 'TIMEOUT',
-  PERMISSION_DENIED = 'PERMISSION_DENIED',
-  NOT_FOUND = 'NOT_FOUND',
-  INVALID_INPUT = 'INVALID_INPUT',
-  CACHE_ERROR = 'CACHE_ERROR'
+  PLATFORM_NOT_SUPPORTED = 'PLATFORM_NOT_SUPPORTED', // 当前平台不支持该功能
+  COMMAND_FAILED = 'COMMAND_FAILED',               // 系统命令执行失败
+  PARSE_ERROR = 'PARSE_ERROR',                     // 命令输出或数据解析失败
+  PERMISSION_DENIED = 'PERMISSION_DENIED',         // 权限不足无法完成操作
+  TIMEOUT = 'TIMEOUT',                             // 操作超过设定超时时间
+  INVALID_CONFIG = 'INVALID_CONFIG',               // 提供的配置无效
+  NOT_AVAILABLE = 'NOT_AVAILABLE',                 // 指标暂时不可用
+  FILE_NOT_FOUND = 'FILE_NOT_FOUND',               // 依赖的文件或路径不存在
+  NETWORK_ERROR = 'NETWORK_ERROR'                  // 网络操作失败
 }
 ```
 
@@ -257,6 +265,13 @@ if (cpuUsage.success) {
   console.log('CPU 使用率:', cpuUsage.data + '%');
 }
 
+// 详细使用率（包含每核数据）
+const usageDetails = await osutils.cpu.usageDetailed();
+if (usageDetails.success) {
+  console.log('整体使用率:', usageDetails.data.overall);
+  console.log('各核心使用率:', usageDetails.data.cores);
+}
+
 // 负载平均值（Linux/macOS）
 const loadAvg = await osutils.cpu.loadAverage();
 if (loadAvg.success) {
@@ -269,37 +284,40 @@ if (loadAvg.success) {
 | 方法 | 返回类型 | 描述 | 平台支持 |
 |--------|-------------|-------------|------------------|
 | `info()` | `Promise<MonitorResult<CPUInfo>>` | CPU 型号、核心、线程、架构 | ✅ 全部 |
-| `usage(interval?)` | `Promise<MonitorResult<number>>` | CPU 使用率百分比 (0-100) | ✅ 全部 |
-| `free(interval?)` | `Promise<MonitorResult<number>>` | CPU 空闲百分比 (0-100) | ✅ 全部 |
+| `usage()` | `Promise<MonitorResult<number>>` | CPU 使用率百分比 (0-100) | ✅ 全部 |
+| `usageDetailed()` | `Promise<MonitorResult<CPUUsage>>` | 详细使用率（含每核心） | ✅ 全部 |
+| `usageByCore()` | `Promise<MonitorResult<number[]>>` | 每核心使用率数组 | ✅ 全部 |
 | `loadAverage()` | `Promise<MonitorResult<LoadAverage>>` | 负载平均值 (1, 5, 15 分钟) | ✅ Linux/macOS |
-| `temperature()` | `Promise<MonitorResult<Temperature>>` | CPU 温度传感器 | ⚠️ 有限 |
-| `frequency()` | `Promise<MonitorResult<FrequencyInfo>>` | 当前 CPU 频率 | ⚠️ 有限 |
+| `temperature()` | `Promise<MonitorResult<Temperature[]>>` | CPU 温度传感器 | ⚠️ 有限 |
+| `frequency()` | `Promise<MonitorResult<FrequencyInfo[]>>` | 当前 CPU 频率信息 | ⚠️ 有限 |
+| `getCacheInfo()` | `Promise<MonitorResult<any>>` | CPU 缓存层级信息 | ⚠️ 有限 |
+| `coreCount()` | `Promise<MonitorResult<{ physical: number; logical: number }>>` | 物理/逻辑核心数量 | ✅ 全部 |
 
 #### 实时 CPU 监控
 
 ```typescript
-// 使用自定义间隔监控 CPU 使用率
-const cpuSubscription = osutils.cpu.monitor(1000, (usage) => {
-  console.log(`CPU 使用率: ${usage}%`);
-
-  // 高使用率警报
-  if (usage > 80) {
-    console.warn('⚠️ 检测到高 CPU 使用率！');
+// 每秒轮询一次使用率
+const pollInterval = setInterval(async () => {
+  const result = await osutils.cpu.usage();
+  if (result.success) {
+    console.log(`CPU 使用率: ${result.data.toFixed(2)}%`);
+    if (result.data > 80) {
+      console.warn('⚠️ 检测到高 CPU 使用率！');
+    }
   }
-});
+}, 1000);
 
-// 30 秒后停止监控
 setTimeout(() => {
-  cpuSubscription.unsubscribe();
-  console.log('CPU 监控已停止');
+  clearInterval(pollInterval);
+  console.log('CPU 使用率轮询已停止');
 }, 30000);
 
-// 带错误处理的监控
-const safeMonitor = osutils.cpu.monitor(2000, (usage) => {
-  console.log('CPU:', usage);
-}, (error) => {
-  console.error('CPU 监控错误:', error);
+// 使用 monitor() 获取 CPU 基本信息快照
+const cpuInfoSubscription = osutils.cpu.withCaching(false).monitor(5000, (info) => {
+  console.log('CPU 型号:', info.model);
 });
+
+setTimeout(() => cpuInfoSubscription.unsubscribe(), 20000);
 ```
 
 ### 💾 内存监控器
@@ -307,19 +325,25 @@ const safeMonitor = osutils.cpu.monitor(2000, (usage) => {
 带智能单位转换的详细内存信息。
 
 ```typescript
-// 带 DataSize 对象的内存信息
+// 带 DataSize 帮助方法的内存信息
 const memInfo = await osutils.memory.info();
 if (memInfo.success) {
-  console.log('总内存:', memInfo.data.total.gigabytes + ' GB');
-  console.log('可用:', memInfo.data.available.gigabytes + ' GB');
-  console.log('已用:', memInfo.data.used.gigabytes + ' GB');
-  console.log('使用率:', memInfo.data.usagePercentage + '%');
+  console.log('总内存:', memInfo.data.total.toGB().toFixed(2) + ' GB');
+  console.log('可用:', memInfo.data.available.toGB().toFixed(2) + ' GB');
+  console.log('已用:', memInfo.data.used.toGB().toFixed(2) + ' GB');
+  console.log('使用率:', memInfo.data.usagePercentage.toFixed(2) + '%');
 }
 
 // 快速内存使用率百分比
 const memUsage = await osutils.memory.usage();
 if (memUsage.success) {
-  console.log('内存使用率:', memUsage.data + '%');
+  console.log('内存使用率:', memUsage.data.toFixed(2) + '%');
+}
+
+// 摘要视图
+const memSummary = await osutils.memory.summary();
+if (memSummary.success) {
+  console.log('摘要:', memSummary.data);
 }
 ```
 
@@ -328,31 +352,31 @@ if (memUsage.success) {
 | 方法 | 返回类型 | 描述 | 平台支持 |
 |--------|-------------|-------------|------------------|
 | `info()` | `Promise<MonitorResult<MemoryInfo>>` | 带 DataSize 对象的详细内存分解 | ✅ 全部 |
+| `detailed()` | `Promise<MonitorResult<MemoryInfo & { breakdown: Record<string, unknown> }>>` | 含平台特定明细 | ⚠️ 平台 |
 | `usage()` | `Promise<MonitorResult<number>>` | 内存使用率百分比 (0-100) | ✅ 全部 |
-| `free()` | `Promise<MonitorResult<DataSize>>` | 空闲内存量 | ✅ 全部 |
-| `pressure()` | `Promise<MonitorResult<MemoryPressure>>` | 内存压力指标 | ⚠️ 有限 |
+| `available()` | `Promise<MonitorResult<DataSize>>` | 可用内存量 | ✅ 全部 |
 | `swap()` | `Promise<MonitorResult<SwapInfo>>` | 虚拟内存/交换信息 | ✅ 全部 |
+| `pressure()` | `Promise<MonitorResult<MemoryPressure>>` | 内存压力指标 | ⚠️ 有限 |
+| `summary()` | `Promise<MonitorResult<{ total: string; used: string; available: string; usagePercentage: number; swap: { total: string; used: string; usagePercentage: number } }>>` | 友好的汇总结果 | ✅ 全部 |
 
 #### DataSize 对象
 
 ```typescript
-interface DataSize {
-  bytes: number;
-  kilobytes: number;
-  megabytes: number;
-  gigabytes: number;
-  terabytes: number;
-
-  // 格式化方法
-  format(precision?: number): string;
-  toHuman(): string;
+class DataSize {
+  constructor(bytes: number);
+  toBytes(): number;
+  toKB(): number;
+  toMB(): number;
+  toGB(): number;
+  toTB(): number;
+  toString(unit?: 'auto' | 'B' | 'KB' | 'MB' | 'GB' | 'TB'): string;
 }
 
 // 使用示例
 const memory = await osutils.memory.info();
 if (memory.success) {
-  console.log(memory.data.total.format(2)); // "16.00 GB"
-  console.log(memory.data.available.toHuman()); // "8.3 GB"
+  console.log(memory.data.total.toString('GB')); // "16.00 GB"
+  console.log(memory.data.available.toString()); // 自动选择单位
 }
 ```
 
@@ -366,24 +390,30 @@ const diskInfo = await osutils.disk.info();
 if (diskInfo.success) {
   diskInfo.data.forEach(disk => {
     console.log('文件系统:', disk.filesystem);
-    console.log('挂载点:', disk.mountPoint);
-    console.log('总容量:', disk.total.format());
-    console.log('可用:', disk.available.format());
+    console.log('挂载点:', disk.mountpoint);
+    console.log('总容量:', disk.total.toString('GB'));
+    console.log('可用:', disk.available.toString('GB'));
     console.log('使用率:', disk.usagePercentage + '%');
   });
 }
 
-// 特定路径使用情况
-const rootUsage = await osutils.disk.usage('/');
-if (rootUsage.success) {
+// 指定挂载点的使用情况
+const rootUsage = await osutils.disk.usageByMountPoint('/');
+if (rootUsage.success && rootUsage.data) {
   console.log('根目录使用率:', rootUsage.data.usagePercentage + '%');
 }
 
 // I/O 统计
 const ioStats = await osutils.disk.stats();
 if (ioStats.success) {
-  console.log('读取操作:', ioStats.data.readOps);
-  console.log('写入操作:', ioStats.data.writeOps);
+  ioStats.data.forEach(stat => {
+    console.log(`${stat.device}:`, {
+      readBytes: stat.readBytes.toString('MB'),
+      writeBytes: stat.writeBytes.toString('MB'),
+      readCount: stat.readCount,
+      writeCount: stat.writeCount
+    });
+  });
 }
 ```
 
@@ -391,12 +421,16 @@ if (ioStats.success) {
 
 | 方法 | 返回类型 | 描述 | 平台支持 |
 |--------|-------------|-------------|------------------|
-| `info(path?)` | `Promise<MonitorResult<DiskInfo[]>>` | 磁盘/分区信息 | ✅ 全部 |
-| `usage(path?)` | `Promise<MonitorResult<DiskUsage>>` | 特定路径的使用情况 | ✅ 全部 |
-| `stats()` | `Promise<MonitorResult<DiskStats>>` | I/O 统计摘要 | ✅ 全部 |
-| `ioStats()` | `Promise<MonitorResult<DiskIOStats>>` | 详细 I/O 性能 | ⚠️ Linux/macOS |
-| `free(path?)` | `Promise<MonitorResult<DataSize>>` | 可用空间 | ✅ 全部 |
-| `healthCheck()` | `Promise<MonitorResult<HealthStatus>>` | 基本磁盘健康 | ⚠️ 有限 |
+| `info()` | `Promise<MonitorResult<DiskInfo[]>>` | 磁盘 / 分区信息 | ✅ 全部 |
+| `infoByDevice(device)` | `Promise<MonitorResult<DiskInfo | null>>` | 按设备或挂载点查询 | ✅ 全部 |
+| `usage()` | `Promise<MonitorResult<DiskUsage[]>>` | 所有挂载点的使用情况 | ✅ 全部 |
+| `usageByMountPoint(mountPoint)` | `Promise<MonitorResult<DiskUsage | null>>` | 指定挂载点使用情况 | ✅ 全部 |
+| `overallUsage()` | `Promise<MonitorResult<number>>` | 所有磁盘加权平均使用率 | ✅ 全部 |
+| `stats()` | `Promise<MonitorResult<DiskStats[]>>` | I/O 统计摘要（需 `includeStats`） | ⚠️ 有限 |
+| `mounts()` | `Promise<MonitorResult<MountPoint[]>>` | 挂载点配置详情 | ✅ 全部 |
+| `filesystems()` | `Promise<MonitorResult<FileSystem[]>>` | 支持的文件系统类型 | ✅ 全部 |
+| `spaceOverview()` | `Promise<MonitorResult<{ total: DataSize; used: DataSize; available: DataSize; usagePercentage: number; disks: number }>>` | 聚合空间使用情况 | ✅ 全部 |
+| `healthCheck()` | `Promise<MonitorResult<{ status: 'healthy' | 'warning' | 'critical'; issues: string[] }>>` | 基础磁盘健康检查 | ⚠️ 有限 |
 
 ### 🌐 网络监控器
 
@@ -408,26 +442,30 @@ const interfaces = await osutils.network.interfaces();
 if (interfaces.success) {
   interfaces.data.forEach(iface => {
     console.log('接口:', iface.name);
-    console.log('接收字节:', iface.rx.bytes.format());
-    console.log('发送字节:', iface.tx.bytes.format());
-    console.log('接收数据包:', iface.rx.packets);
-    console.log('发送数据包:', iface.tx.packets);
+    console.log('地址:', iface.addresses);
+    console.log('状态:', iface.state);
   });
 }
 
 // 网络总览
 const overview = await osutils.network.overview();
 if (overview.success) {
-  console.log('总接收:', overview.data.totalRx.format());
-  console.log('总发送:', overview.data.totalTx.format());
+  console.log('总接收:', overview.data.totalRxBytes.toString('MB'));
+  console.log('总发送:', overview.data.totalTxBytes.toString('MB'));
 }
 
-// 实时网络监控
-const netSub = osutils.network.monitor(5000, (stats) => {
-  console.log('网络活动:', {
-    download: stats.totalRx.megabytes + ' MB',
-    upload: stats.totalTx.megabytes + ' MB'
+// 接口统计信息
+const stats = await osutils.network.statsAsync();
+if (stats.success) {
+  stats.data.forEach(stat => {
+    console.log(`${stat.interface}: RX ${stat.rxBytes.toString('MB')} | TX ${stat.txBytes.toString('MB')}`);
   });
+}
+
+// 实时接口监控（返回接口快照）
+const netSub = osutils.network.monitor(5000, (snapshot) => {
+  const active = snapshot.filter(iface => iface.state === 'up').map(iface => iface.name);
+  console.log('活跃接口:', active);
 });
 ```
 
@@ -436,11 +474,15 @@ const netSub = osutils.network.monitor(5000, (stats) => {
 | 方法 | 返回类型 | 描述 | 平台支持 |
 |--------|-------------|-------------|------------------|
 | `interfaces()` | `Promise<MonitorResult<NetworkInterface[]>>` | 所有网络接口 | ✅ 全部 |
-| `overview()` | `Promise<MonitorResult<NetworkOverview>>` | 网络统计总量 | ✅ 全部 |
-| `stats(interface?)` | `Promise<MonitorResult<NetworkStats>>` | 接口特定统计 | ✅ 全部 |
-| `speed(interval?)` | `Promise<MonitorResult<NetworkSpeed>>` | 网络速度计算 | ✅ 全部 |
-| `connections()` | `Promise<MonitorResult<Connection[]>>` | 活动连接 | ⚠️ 有限 |
-| `gateway()` | `Promise<MonitorResult<GatewayInfo>>` | 默认网关信息 | ✅ 全部 |
+| `interfaceByName(name)` | `Promise<MonitorResult<NetworkInterface | null>>` | 指定接口信息 | ✅ 全部 |
+| `overview()` | `Promise<MonitorResult<{ interfaces: number; activeInterfaces: number; totalRxBytes: DataSize; totalTxBytes: DataSize; totalPackets: number; totalErrors: number }>>` | 网络统计总览 | ✅ 全部 |
+| `statsAsync()` | `Promise<MonitorResult<NetworkStats[]>>` | 接口统计（需 `includeInterfaceStats`） | ✅ 全部 |
+| `statsByInterface(name)` | `Promise<MonitorResult<NetworkStats | null>>` | 指定接口统计 | ✅ 全部 |
+| `bandwidth()` | `Promise<MonitorResult<{ interval: number; interfaces: Array<{ interface: string; rxSpeed: number; txSpeed: number; rxSpeedFormatted: string; txSpeedFormatted: string }> }>>` | 带宽测量（两次采样） | ⚠️ 有限 |
+| `connections()` | `Promise<MonitorResult<any[]>>` | 活动连接（需启用 `includeConnections`） | ⚠️ 有限 |
+| `gateway()` | `Promise<MonitorResult<{ gateway: string; interface: string } | null>>` | 默认网关信息 | ✅ 全部 |
+| `publicIP()` | `Promise<MonitorResult<{ ipv4?: string; ipv6?: string }>>` | 公网 IP（占位实现） | ⚠️ 有限 |
+| `healthCheck()` | `Promise<MonitorResult<{ status: 'healthy' | 'warning' | 'critical'; issues: string[] }>>` | 网络健康检查 | ⚠️ 有限 |
 
 ### 🔄 进程监控器
 
@@ -454,24 +496,25 @@ if (processes.success) {
 
   // 显示前 5 个 CPU 消耗者
   const topCpu = processes.data
-    .sort((a, b) => b.cpu - a.cpu)
+    .filter(proc => proc.cpuUsage > 0)
+    .sort((a, b) => b.cpuUsage - a.cpuUsage)
     .slice(0, 5);
 
   topCpu.forEach(proc => {
-    console.log(`${proc.name} (${proc.pid}): ${proc.cpu}% CPU`);
+    console.log(`${proc.name} (${proc.pid}): ${proc.cpuUsage.toFixed(2)}% CPU`);
   });
 }
 
 // 查找特定进程
-const nodeProcesses = await osutils.process.findByName('node');
+const nodeProcesses = await osutils.process.byName('node');
 if (nodeProcesses.success) {
   console.log('Node.js 进程数:', nodeProcesses.data.length);
 }
 
 // 当前进程信息
-const currentProc = await osutils.process.info(process.pid);
-if (currentProc.success) {
-  console.log('当前进程内存:', currentProc.data.memory.format());
+const currentProc = await osutils.process.byPid(process.pid);
+if (currentProc.success && currentProc.data) {
+  console.log('当前进程内存:', currentProc.data.memoryUsage.toString('MB'));
 }
 ```
 
@@ -479,12 +522,14 @@ if (currentProc.success) {
 
 | 方法 | 返回类型 | 描述 | 平台支持 |
 |--------|-------------|-------------|------------------|
-| `list(options?)` | `Promise<MonitorResult<ProcessInfo[]>>` | 所有运行进程 | ✅ 全部 |
-| `info(pid)` | `Promise<MonitorResult<ProcessInfo>>` | 特定进程详细信息 | ✅ 全部 |
-| `findByName(name)` | `Promise<MonitorResult<ProcessInfo[]>>` | 按进程名查找 | ✅ 全部 |
-| `topCpu(limit?)` | `Promise<MonitorResult<ProcessInfo[]>>` | 顶级 CPU 消耗者 | ✅ 全部 |
-| `topMemory(limit?)` | `Promise<MonitorResult<ProcessInfo[]>>` | 顶级内存消耗者 | ✅ 全部 |
-| `tree()` | `Promise<MonitorResult<ProcessTree[]>>` | 进程层次结构 | ⚠️ 有限 |
+| `list(options?)` | `Promise<MonitorResult<ProcessInfo[]>>` | 所有运行进程（支持过滤） | ✅ 全部 |
+| `byPid(pid)` | `Promise<MonitorResult<ProcessInfo | null>>` | 特定进程详细信息 | ✅ 全部 |
+| `byName(name)` | `Promise<MonitorResult<ProcessInfo[]>>` | 按进程名查找 | ✅ 全部 |
+| `topByCpu(limit?)` | `Promise<MonitorResult<ProcessInfo[]>>` | 顶级 CPU 消耗者 | ✅ 全部 |
+| `topByMemory(limit?)` | `Promise<MonitorResult<ProcessInfo[]>>` | 顶级内存消耗者 | ✅ 全部 |
+| `children(parentPid)` | `Promise<MonitorResult<ProcessInfo[]>>` | 子进程列表（需启用配置） | ⚠️ 有限 |
+| `tree(rootPid?)` | `Promise<MonitorResult<any>>` | 进程层次结构 | ⚠️ 有限 |
+| `stats()` | `Promise<MonitorResult<{ total: number; running: number; sleeping: number; waiting: number; zombie: number; stopped: number; unknown: number; totalCpuUsage: number; totalMemoryUsage: DataSize }>>` | 进程统计汇总 | ✅ 全部 |
 | `kill(pid, signal?)` | `Promise<MonitorResult<boolean>>` | 终止进程 | ⚠️ 有限 |
 
 ### 🖥️ 系统监控器
@@ -496,24 +541,24 @@ if (currentProc.success) {
 const sysInfo = await osutils.system.info();
 if (sysInfo.success) {
   console.log('主机名:', sysInfo.data.hostname);
-  console.log('操作系统:', sysInfo.data.osName);
-  console.log('版本:', sysInfo.data.osVersion);
-  console.log('架构:', sysInfo.data.arch);
   console.log('平台:', sysInfo.data.platform);
+  console.log('发行版:', sysInfo.data.distro);
+  console.log('版本:', sysInfo.data.release);
+  console.log('架构:', sysInfo.data.arch);
 }
 
 // 系统运行时间
 const uptime = await osutils.system.uptime();
 if (uptime.success) {
-  const days = Math.floor(uptime.data / (24 * 60 * 60));
-  const hours = Math.floor((uptime.data % (24 * 60 * 60)) / (60 * 60));
-  console.log(`运行时间: ${days} 天, ${hours} 小时`);
+  console.log('运行时间 (毫秒):', uptime.data.uptime);
+  console.log('启动时间:', new Date(uptime.data.bootTime).toISOString());
+  console.log('格式化运行时间:', uptime.data.uptimeFormatted);
 }
 
 // 活动用户
 const users = await osutils.system.users();
 if (users.success) {
-  console.log('登录用户:', users.data.map(u => u.name));
+  console.log('登录用户:', users.data.map(u => u.username));
 }
 ```
 
@@ -522,12 +567,13 @@ if (users.success) {
 | 方法 | 返回类型 | 描述 | 平台支持 |
 |--------|-------------|-------------|------------------|
 | `info()` | `Promise<MonitorResult<SystemInfo>>` | 完整的系统信息 | ✅ 全部 |
-| `uptime()` | `Promise<MonitorResult<number>>` | 运行时间（秒） | ✅ 全部 |
-| `bootTime()` | `Promise<MonitorResult<Date>>` | 启动时间戳 | ✅ 全部 |
-| `users()` | `Promise<MonitorResult<UserInfo[]>>` | 当前登录用户 | ✅ 全部 |
-| `hostname()` | `Promise<MonitorResult<string>>` | 系统主机名 | ✅ 全部 |
-| `osInfo()` | `Promise<MonitorResult<OSInfo>>` | 操作系统详细信息 | ✅ 全部 |
-| `healthCheck()` | `Promise<MonitorResult<HealthStatus>>` | 系统健康概览 | ✅ 全部 |
+| `uptime()` | `Promise<MonitorResult<{ uptime: number; uptimeFormatted: string; bootTime: number }>>` | 运行时间与启动时间戳 | ✅ 全部 |
+| `load()` | `Promise<MonitorResult<LoadAverage & { normalized: LoadAverage; status: 'low' | 'normal' | 'high' | 'critical' }>>` | 系统负载与状态 | ⚠️ 有限 |
+| `users()` | `Promise<MonitorResult<Array<{ username: string; terminal: string; host: string; loginTime: number }>>>` | 当前登录用户 | ⚠️ 平台 |
+| `services()` | `Promise<MonitorResult<Array<{ name: string; status: string; enabled: boolean }>>>` | 服务状态（需配置开启） | ⚠️ 有限 |
+| `overview()` | `Promise<MonitorResult<{ system: { hostname: string; platform: string; uptime: string; loadStatus: string }; resources: { cpuUsage: number; memoryUsage: number; diskUsage: number; networkActivity: boolean }; counts: { processes: number; users: number; services?: number }; health: { status: 'healthy' | 'warning' | 'critical'; issues: string[] } }>>` | 综合概览 | ⚠️ 有限 |
+| `time()` | `Promise<MonitorResult<{ current: number; timezone: string; utcOffset: number; formatted: string; bootTime?: number }>>` | 当前时间信息 | ✅ 全部 |
+| `healthCheck()` | `Promise<MonitorResult<{ status: 'healthy' | 'warning' | 'critical'; checks: Record<string, boolean>; issues: string[]; score: number }>>` | 系统健康报告 | ⚠️ 有限 |
 
 ## 🌍 平台兼容性
 
@@ -576,13 +622,25 @@ const osutils = new OSUtils({ debug: true });
 // 全面系统概览
 const overview = await osutils.overview();
 console.log('📊 系统概览:');
-console.log('CPU 使用率:', overview.cpu.usage + '%');
-console.log('内存使用率:', overview.memory.usagePercentage + '%');
-console.log('磁盘使用率:', overview.disk.usagePercentage + '%');
-console.log('网络接收:', overview.network.totalRx.format());
-console.log('网络发送:', overview.network.totalTx.format());
-console.log('进程数:', overview.process.total);
-console.log('运行时间:', Math.floor(overview.system.uptime / 3600) + ' 小时');
+if (overview.cpu.usage != null) {
+  console.log('CPU 使用率:', overview.cpu.usage + '%');
+}
+if (overview.memory?.usagePercentage != null) {
+  console.log('内存使用率:', overview.memory.usagePercentage + '%');
+}
+if (overview.disk?.usagePercentage != null) {
+  console.log('磁盘使用率:', overview.disk.usagePercentage + '%');
+}
+if (overview.network) {
+  console.log('网络接收:', overview.network.totalRxBytes.toString('MB'));
+  console.log('网络发送:', overview.network.totalTxBytes.toString('MB'));
+}
+if (overview.processes) {
+  console.log('进程数:', overview.processes.total);
+}
+if (overview.system?.uptime != null) {
+  console.log('运行时间:', (overview.system.uptime / 3600).toFixed(1) + ' 小时');
+}
 
 // 系统健康检查
 const health = await osutils.healthCheck();
@@ -590,16 +648,7 @@ console.log('🏥 系统健康:', health.status); // 'healthy' | 'warning' | 'cr
 
 if (health.issues.length > 0) {
   console.log('⚠️ 检测到问题:');
-  health.issues.forEach(issue => {
-    console.log(`- ${issue.component}: ${issue.message}`);
-  });
-}
-
-if (health.recommendations.length > 0) {
-  console.log('💡 建议:');
-  health.recommendations.forEach(rec => {
-    console.log(`- ${rec}`);
-  });
+  health.issues.forEach(issue => console.log(`- ${issue}`));
 }
 ```
 
@@ -608,55 +657,75 @@ if (health.recommendations.length > 0) {
 ```typescript
 // 创建监控仪表板
 class SystemDashboard {
-  private subscriptions: any[] = [];
+  private intervals: NodeJS.Timeout[] = [];
   private alerts: string[] = [];
 
   start() {
     console.log('🚀 启动系统监控仪表板...');
 
-    // CPU 监控
-    const cpuSub = osutils.cpu.monitor(1000, (usage) => {
-      this.updateDisplay('CPU', usage + '%');
-      if (usage > 80) {
-        this.addAlert(`⚠️ 高 CPU 使用率: ${usage}%`);
-      }
-    });
-
-    // 内存监控
-    const memSub = osutils.memory.monitor(2000, (info) => {
-      const percent = info.usagePercentage;
-      this.updateDisplay('内存', percent + '%');
-      if (percent > 85) {
-        this.addAlert(`⚠️ 高内存使用率: ${percent}%`);
-      }
-    });
-
-    // 磁盘监控
-    const diskSub = osutils.disk.monitor(10000, (info) => {
-      const rootDisk = info.find(d => d.mountPoint === '/');
-      if (rootDisk) {
-        this.updateDisplay('磁盘', rootDisk.usagePercentage + '%');
-        if (rootDisk.usagePercentage > 90) {
-          this.addAlert(`⚠️ 磁盘几乎已满: ${rootDisk.usagePercentage}%`);
+    // CPU 使用率轮询
+    this.intervals.push(setInterval(async () => {
+      const result = await osutils.cpu.usage();
+      if (result.success) {
+        const value = result.data.toFixed(2);
+        this.updateDisplay('CPU', `${value}%`);
+        if (result.data > 80) {
+          this.addAlert(`⚠️ 高 CPU 使用率: ${value}%`);
         }
       }
-    });
+    }, 1000));
 
-    // 网络监控
-    const netSub = osutils.network.monitor(5000, (stats) => {
-      this.updateDisplay('网络', `↓${stats.totalRx.format()} ↑${stats.totalTx.format()}`);
-    });
+    // 内存使用率轮询
+    this.intervals.push(setInterval(async () => {
+      const result = await osutils.memory.info();
+      if (result.success) {
+        const percent = result.data.usagePercentage;
+        this.updateDisplay('内存', `${percent.toFixed(2)}%`);
+        if (percent > 85) {
+          this.addAlert(`⚠️ 高内存使用率: ${percent.toFixed(2)}%`);
+        }
+      }
+    }, 2000));
 
-    this.subscriptions = [cpuSub, memSub, diskSub, netSub];
+    // 磁盘使用率轮询
+    this.intervals.push(setInterval(async () => {
+      const result = await osutils.disk.usageByMountPoint('/');
+      if (result.success && result.data) {
+        const percent = result.data.usagePercentage;
+        this.updateDisplay('磁盘', `${percent.toFixed(1)}%`);
+        if (percent > 90) {
+          this.addAlert(`⚠️ 磁盘几乎已满: ${percent.toFixed(1)}%`);
+        }
+      }
+    }, 10000));
+
+    // 网络统计轮询
+    this.intervals.push(setInterval(async () => {
+      const stats = await osutils.network.statsAsync();
+      if (stats.success) {
+        const aggregate = stats.data.reduce(
+          (acc, item) => ({
+            rx: acc.rx + item.rxBytes.toBytes(),
+            tx: acc.tx + item.txBytes.toBytes()
+          }),
+          { rx: 0, tx: 0 }
+        );
+
+        this.updateDisplay(
+          '网络',
+          `↓${(aggregate.rx / 1024 / 1024).toFixed(2)} MB ↑${(aggregate.tx / 1024 / 1024).toFixed(2)} MB`
+        );
+      }
+    }, 5000));
 
     // 警报检查器
-    setInterval(() => {
+    this.intervals.push(setInterval(() => {
       if (this.alerts.length > 0) {
         console.log('🚨 活动警报:');
         this.alerts.forEach(alert => console.log(alert));
         this.alerts = [];
       }
-    }, 10000);
+    }, 10000));
   }
 
   private updateDisplay(metric: string, value: string) {
@@ -669,7 +738,8 @@ class SystemDashboard {
   }
 
   stop() {
-    this.subscriptions.forEach(sub => sub.unsubscribe());
+    this.intervals.forEach(interval => clearInterval(interval));
+    this.intervals = [];
     console.log('⏹️ 监控已停止');
   }
 }
@@ -694,7 +764,6 @@ const osutils = new OSUtils({
 
   // 执行设置
   timeout: 15000,
-  retries: 3,
 
   // 调试模式
   debug: false,
@@ -712,7 +781,8 @@ const osutils = new OSUtils({
     timeout: 10000
   },
   network: {
-    cacheTTL: 2000     // 网络中等刷新
+    cacheTTL: 2000,    // 网络中等刷新
+    includeInterfaceStats: true
   },
   process: {
     cacheTTL: 10000    // 进程慢速刷新
@@ -723,15 +793,16 @@ const osutils = new OSUtils({
 osutils.configureCache({
   enabled: true,
   maxSize: 2000,
-  defaultTTL: 8000,
-  cleanupInterval: 60000
+  defaultTTL: 8000
 });
 
 // 缓存统计
 const cacheStats = osutils.getCacheStats();
-console.log('缓存命中率:', (cacheStats.hits / cacheStats.requests * 100).toFixed(1) + '%');
-console.log('缓存条目数:', cacheStats.size);
-console.log('内存使用:', cacheStats.memoryUsage.format());
+if (cacheStats) {
+  console.log('缓存命中率:', cacheStats.hitRate.toFixed(1) + '%');
+  console.log('缓存条目数:', cacheStats.size);
+  console.log('估算内存使用:', (cacheStats.memoryUsage / (1024 * 1024)).toFixed(2) + ' MB');
+}
 
 // 需要时清理缓存
 osutils.clearCache();
@@ -760,8 +831,8 @@ class SystemMonitoringService {
         this.osutils.system.info()
       ]);
 
-      const data: any = {};
-      const errors: MonitorError[] = [];
+      const data: Record<string, unknown> = {};
+      const errors: Array<{ component: string; error: MonitorError | Error; timestamp: Date }> = [];
 
       results.forEach((result, index) => {
         const keys = ['cpu', 'memory', 'disk', 'network', 'system'];
@@ -770,18 +841,20 @@ class SystemMonitoringService {
         if (result.status === 'fulfilled' && result.value.success) {
           data[key] = result.value.data;
         } else {
-          const error = result.status === 'fulfilled'
+          const monitorError = result.status === 'fulfilled'
             ? result.value.error
-            : new Error(result.reason);
+            : (result.reason instanceof MonitorError
+              ? result.reason
+              : MonitorError.createCommandFailed(process.platform, 'unknown', { reason: result.reason }));
 
           errors.push({
             component: key,
-            error,
+            error: monitorError,
             timestamp: new Date()
           });
 
           // 处理特定错误类型
-          this.handleComponentError(key, error);
+          this.handleComponentError(key, monitorError);
         }
       });
 

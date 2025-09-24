@@ -2,15 +2,15 @@
  * 错误代码枚举
  */
 export enum ErrorCode {
-  PLATFORM_NOT_SUPPORTED = 'PLATFORM_NOT_SUPPORTED',
-  COMMAND_FAILED = 'COMMAND_FAILED',
-  PARSE_ERROR = 'PARSE_ERROR',
-  PERMISSION_DENIED = 'PERMISSION_DENIED',
-  TIMEOUT = 'TIMEOUT',
-  INVALID_CONFIG = 'INVALID_CONFIG',
-  NOT_AVAILABLE = 'NOT_AVAILABLE',
-  FILE_NOT_FOUND = 'FILE_NOT_FOUND',
-  NETWORK_ERROR = 'NETWORK_ERROR'
+  PLATFORM_NOT_SUPPORTED = 'PLATFORM_NOT_SUPPORTED', // 当前平台不支持该功能
+  COMMAND_FAILED = 'COMMAND_FAILED',                 // 系统命令执行失败
+  PARSE_ERROR = 'PARSE_ERROR',                       // 命令输出或数据解析失败
+  PERMISSION_DENIED = 'PERMISSION_DENIED',           // 权限不足无法完成操作
+  TIMEOUT = 'TIMEOUT',                               // 操作超过设定超时时间
+  INVALID_CONFIG = 'INVALID_CONFIG',                 // 提供的配置无效
+  NOT_AVAILABLE = 'NOT_AVAILABLE',                   // 指标暂时不可用
+  FILE_NOT_FOUND = 'FILE_NOT_FOUND',                 // 依赖的文件或路径不存在
+  NETWORK_ERROR = 'NETWORK_ERROR'                    // 网络操作失败
 }
 
 /**

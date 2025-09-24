@@ -205,11 +205,11 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 读取 ps -eo pid,ppid,command,pcpu,pmem,state,user 解析进程列表
+   * 读取 ps -axo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args= 解析进程列表
    */
   async getProcesses(): Promise<any> {
     try {
-      const result = await this.executeCommand('ps -eo pid,ppid,command,pcpu,pmem,state,user');
+      const result = await this.executeCommand('ps -axo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args=');
       this.validateCommandResult(result, 'ps command');
       return this.parseProcessList(result.stdout);
     } catch (error) {
@@ -666,25 +666,25 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 解析 ps -eo pid,ppid,command,pcpu,pmem,state,user 输出为进程列表
+   * 解析 ps -axo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args= 输出为进程列表
    */
   private parseProcessList(output: string): any {
     const lines = output.split('\n').filter(line => line.trim());
     const processes: any[] = [];
 
-    for (let i = 1; i < lines.length; i++) { // 跳过头部
-      const line = lines[i];
-      const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.+?)\s+([\d.]+)\s+([\d.]+)\s+(\w+)\s+(\w+)$/);
+    for (const line of lines) {
+      const fields = line.trim().split(/\s+/);
 
-      if (match) {
-        const [, pid, ppid, command, pcpu, pmem, state, user] = match;
+      if (fields.length >= 8) {
+        const [pid, ppid, cmd, pcpu, pmem, rss, state, user, ...argsParts] = fields;
 
         processes.push({
           pid: this.safeParseInt(pid),
           ppid: this.safeParseInt(ppid),
-          command: command.trim(),
+          command: [cmd, ...argsParts].join(' ').trim(),
           cpuUsage: this.safeParseNumber(pcpu),
-          memoryUsage: this.safeParseNumber(pmem),
+          memoryUsage: this.safeParseInt(rss) * 1024,
+          memoryPercentage: this.safeParseNumber(pmem),
           state,
           user
         });
@@ -873,11 +873,11 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取进程列表，解析 ps -eo pid,ppid,comm,%cpu,%mem,stat,user,lstart,args 输出为进程列表
+   * 获取进程列表，解析 ps -axo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args= 输出为进程列表
    */
   async getProcessList(): Promise<any> {
     try {
-      const result = await this.executeCommand('ps -eo pid,ppid,comm,%cpu,%mem,stat,user,lstart,args');
+      const result = await this.executeCommand('ps -axo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args=');
       return this.parseProcessList(result.stdout);
     } catch (error) {
       throw this.createCommandError('getProcessList', error);

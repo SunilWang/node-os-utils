@@ -184,14 +184,20 @@ osutils.configureCache({
 All operations return a `MonitorResult<T>` object for consistent error handling:
 
 ```typescript
-interface MonitorResult<T> {
-  success: boolean;
-  data?: T;
-  error?: MonitorError;
-  platform: string;
-  timestamp: Date;
-  cached?: boolean;
-}
+type MonitorResult<T> =
+  | {
+      success: true;
+      data: T;
+      timestamp: number;
+      cached: boolean;
+      platform: string;
+    }
+  | {
+      success: false;
+      error: MonitorError;
+      platform: string;
+      timestamp: number;
+    };
 ```
 
 ### Error Handling Examples
@@ -219,13 +225,15 @@ if (result.success) {
 
 ```typescript
 enum ErrorCode {
-  PLATFORM_NOT_SUPPORTED = 'PLATFORM_NOT_SUPPORTED',
-  COMMAND_FAILED = 'COMMAND_FAILED',
-  TIMEOUT = 'TIMEOUT',
-  PERMISSION_DENIED = 'PERMISSION_DENIED',
-  NOT_FOUND = 'NOT_FOUND',
-  INVALID_INPUT = 'INVALID_INPUT',
-  CACHE_ERROR = 'CACHE_ERROR'
+  PLATFORM_NOT_SUPPORTED = 'PLATFORM_NOT_SUPPORTED', // Feature unavailable on current platform
+  COMMAND_FAILED = 'COMMAND_FAILED',               // Shell/command execution failed
+  PARSE_ERROR = 'PARSE_ERROR',                     // Failed to parse command output or data
+  PERMISSION_DENIED = 'PERMISSION_DENIED',         // Lacking required privileges
+  TIMEOUT = 'TIMEOUT',                             // Operation exceeded the configured timeout
+  INVALID_CONFIG = 'INVALID_CONFIG',               // Provided configuration is invalid
+  NOT_AVAILABLE = 'NOT_AVAILABLE',                 // Metric temporarily unavailable
+  FILE_NOT_FOUND = 'FILE_NOT_FOUND',               // Required file or path missing
+  NETWORK_ERROR = 'NETWORK_ERROR'                  // Network operation failed
 }
 ```
 
@@ -257,6 +265,13 @@ if (cpuUsage.success) {
   console.log('CPU Usage:', cpuUsage.data + '%');
 }
 
+// Detailed usage (overall + per core)
+const usageDetails = await osutils.cpu.usageDetailed();
+if (usageDetails.success) {
+  console.log('Overall:', usageDetails.data.overall);
+  console.log('Per core:', usageDetails.data.cores);
+}
+
 // Load average (Linux/macOS)
 const loadAvg = await osutils.cpu.loadAverage();
 if (loadAvg.success) {
@@ -269,37 +284,40 @@ if (loadAvg.success) {
 | Method | Return Type | Description | Platform Support |
 |--------|-------------|-------------|------------------|
 | `info()` | `Promise<MonitorResult<CPUInfo>>` | CPU model, cores, threads, architecture | ✅ All |
-| `usage(interval?)` | `Promise<MonitorResult<number>>` | CPU usage percentage (0-100) | ✅ All |
-| `free(interval?)` | `Promise<MonitorResult<number>>` | CPU free percentage (0-100) | ✅ All |
+| `usage()` | `Promise<MonitorResult<number>>` | CPU usage percentage (0-100) | ✅ All |
+| `usageDetailed()` | `Promise<MonitorResult<CPUUsage>>` | Usage breakdown including per-core data | ✅ All |
+| `usageByCore()` | `Promise<MonitorResult<number[]>>` | Per-core usage percentages | ✅ All |
 | `loadAverage()` | `Promise<MonitorResult<LoadAverage>>` | Load averages (1, 5, 15 min) | ✅ Linux/macOS |
-| `temperature()` | `Promise<MonitorResult<Temperature>>` | CPU temperature sensors | ⚠️ Limited |
-| `frequency()` | `Promise<MonitorResult<FrequencyInfo>>` | Current CPU frequencies | ⚠️ Limited |
+| `temperature()` | `Promise<MonitorResult<Temperature[]>>` | CPU temperature sensors | ⚠️ Limited |
+| `frequency()` | `Promise<MonitorResult<FrequencyInfo[]>>` | Current CPU frequencies | ⚠️ Limited |
+| `getCacheInfo()` | `Promise<MonitorResult<any>>` | CPU cache hierarchy information | ⚠️ Limited |
+| `coreCount()` | `Promise<MonitorResult<{ physical: number; logical: number }>>` | Physical/logical core counts | ✅ All |
 
 #### Real-time CPU Monitoring
 
 ```typescript
-// Monitor CPU usage with custom interval
-const cpuSubscription = osutils.cpu.monitor(1000, (usage) => {
-  console.log(`CPU Usage: ${usage}%`);
-
-  // Alert on high usage
-  if (usage > 80) {
-    console.warn('⚠️ High CPU usage detected!');
+// Poll usage every second with manual interval control
+const pollInterval = setInterval(async () => {
+  const result = await osutils.cpu.usage();
+  if (result.success) {
+    console.log(`CPU Usage: ${result.data.toFixed(2)}%`);
+    if (result.data > 80) {
+      console.warn('⚠️ High CPU usage detected!');
+    }
   }
-});
+}, 1000);
 
-// Stop monitoring after 30 seconds
 setTimeout(() => {
-  cpuSubscription.unsubscribe();
-  console.log('CPU monitoring stopped');
+  clearInterval(pollInterval);
+  console.log('CPU usage polling stopped');
 }, 30000);
 
-// Monitor with error handling
-const safeMonitor = osutils.cpu.monitor(2000, (usage) => {
-  console.log('CPU:', usage);
-}, (error) => {
-  console.error('CPU monitoring error:', error);
+// Fetch CPU info periodically using the built-in monitor helper
+const cpuInfoSubscription = osutils.cpu.withCaching(false).monitor(5000, (info) => {
+  console.log('CPU Model:', info.model);
 });
+
+setTimeout(() => cpuInfoSubscription.unsubscribe(), 20000);
 ```
 
 ### 💾 Memory Monitor
@@ -307,19 +325,25 @@ const safeMonitor = osutils.cpu.monitor(2000, (usage) => {
 Detailed memory information with smart unit conversion.
 
 ```typescript
-// Memory information with DataSize objects
+// Memory information with DataSize helpers
 const memInfo = await osutils.memory.info();
 if (memInfo.success) {
-  console.log('Total Memory:', memInfo.data.total.gigabytes + ' GB');
-  console.log('Available:', memInfo.data.available.gigabytes + ' GB');
-  console.log('Used:', memInfo.data.used.gigabytes + ' GB');
-  console.log('Usage:', memInfo.data.usagePercentage + '%');
+  console.log('Total Memory:', memInfo.data.total.toGB().toFixed(2) + ' GB');
+  console.log('Available:', memInfo.data.available.toGB().toFixed(2) + ' GB');
+  console.log('Used:', memInfo.data.used.toGB().toFixed(2) + ' GB');
+  console.log('Usage:', memInfo.data.usagePercentage.toFixed(2) + '%');
 }
 
 // Quick memory usage percentage
 const memUsage = await osutils.memory.usage();
 if (memUsage.success) {
-  console.log('Memory Usage:', memUsage.data + '%');
+  console.log('Memory Usage:', memUsage.data.toFixed(2) + '%');
+}
+
+// Summary view with formatted strings
+const memSummary = await osutils.memory.summary();
+if (memSummary.success) {
+  console.log('Summary:', memSummary.data);
 }
 ```
 
@@ -328,31 +352,31 @@ if (memUsage.success) {
 | Method | Return Type | Description | Platform Support |
 |--------|-------------|-------------|------------------|
 | `info()` | `Promise<MonitorResult<MemoryInfo>>` | Detailed memory breakdown with DataSize objects | ✅ All |
+| `detailed()` | `Promise<MonitorResult<MemoryInfo & { breakdown: Record<string, unknown> }>>` | Adds platform-specific breakdown data | ⚠️ Platform |
 | `usage()` | `Promise<MonitorResult<number>>` | Memory usage percentage (0-100) | ✅ All |
-| `free()` | `Promise<MonitorResult<DataSize>>` | Free memory amount | ✅ All |
-| `pressure()` | `Promise<MonitorResult<MemoryPressure>>` | Memory pressure indicators | ⚠️ Limited |
+| `available()` | `Promise<MonitorResult<DataSize>>` | Available memory amount | ✅ All |
 | `swap()` | `Promise<MonitorResult<SwapInfo>>` | Virtual memory/swap information | ✅ All |
+| `pressure()` | `Promise<MonitorResult<MemoryPressure>>` | Memory pressure indicators | ⚠️ Limited |
+| `summary()` | `Promise<MonitorResult<{ total: string; used: string; available: string; usagePercentage: number; swap: { total: string; used: string; usagePercentage: number } }>>` | Readable summary including swap usage | ✅ All |
 
 #### DataSize Object
 
 ```typescript
-interface DataSize {
-  bytes: number;
-  kilobytes: number;
-  megabytes: number;
-  gigabytes: number;
-  terabytes: number;
-
-  // Formatting methods
-  format(precision?: number): string;
-  toHuman(): string;
+class DataSize {
+  constructor(bytes: number);
+  toBytes(): number;
+  toKB(): number;
+  toMB(): number;
+  toGB(): number;
+  toTB(): number;
+  toString(unit?: 'auto' | 'B' | 'KB' | 'MB' | 'GB' | 'TB'): string;
 }
 
 // Usage example
 const memory = await osutils.memory.info();
 if (memory.success) {
-  console.log(memory.data.total.format(2)); // "16.00 GB"
-  console.log(memory.data.available.toHuman()); // "8.3 GB"
+  console.log(memory.data.total.toString('GB')); // "16.00 GB"
+  console.log(memory.data.available.toString()); // automatic unit selection
 }
 ```
 
@@ -366,24 +390,30 @@ const diskInfo = await osutils.disk.info();
 if (diskInfo.success) {
   diskInfo.data.forEach(disk => {
     console.log('Filesystem:', disk.filesystem);
-    console.log('Mount Point:', disk.mountPoint);
-    console.log('Total:', disk.total.format());
-    console.log('Available:', disk.available.format());
+    console.log('Mount Point:', disk.mountpoint);
+    console.log('Total:', disk.total.toString('GB'));
+    console.log('Available:', disk.available.toString('GB'));
     console.log('Usage:', disk.usagePercentage + '%');
   });
 }
 
-// Specific path usage
-const rootUsage = await osutils.disk.usage('/');
-if (rootUsage.success) {
+// Specific mount usage
+const rootUsage = await osutils.disk.usageByMountPoint('/');
+if (rootUsage.success && rootUsage.data) {
   console.log('Root usage:', rootUsage.data.usagePercentage + '%');
 }
 
 // I/O statistics
 const ioStats = await osutils.disk.stats();
 if (ioStats.success) {
-  console.log('Read operations:', ioStats.data.readOps);
-  console.log('Write operations:', ioStats.data.writeOps);
+  ioStats.data.forEach(stat => {
+    console.log(`${stat.device}:`, {
+      readBytes: stat.readBytes.toString('MB'),
+      writeBytes: stat.writeBytes.toString('MB'),
+      readCount: stat.readCount,
+      writeCount: stat.writeCount
+    });
+  });
 }
 ```
 
@@ -391,12 +421,16 @@ if (ioStats.success) {
 
 | Method | Return Type | Description | Platform Support |
 |--------|-------------|-------------|------------------|
-| `info(path?)` | `Promise<MonitorResult<DiskInfo[]>>` | Disk/partition information | ✅ All |
-| `usage(path?)` | `Promise<MonitorResult<DiskUsage>>` | Usage for specific path | ✅ All |
-| `stats()` | `Promise<MonitorResult<DiskStats>>` | I/O statistics summary | ✅ All |
-| `ioStats()` | `Promise<MonitorResult<DiskIOStats>>` | Detailed I/O performance | ⚠️ Linux/macOS |
-| `free(path?)` | `Promise<MonitorResult<DataSize>>` | Available space | ✅ All |
-| `healthCheck()` | `Promise<MonitorResult<HealthStatus>>` | Basic disk health | ⚠️ Limited |
+| `info()` | `Promise<MonitorResult<DiskInfo[]>>` | Disk/partition information | ✅ All |
+| `infoByDevice(device)` | `Promise<MonitorResult<DiskInfo | null>>` | Lookup device or mountpoint | ✅ All |
+| `usage()` | `Promise<MonitorResult<DiskUsage[]>>` | Usage for mounted filesystems | ✅ All |
+| `usageByMountPoint(mountPoint)` | `Promise<MonitorResult<DiskUsage | null>>` | Usage for a specific mount point | ✅ All |
+| `overallUsage()` | `Promise<MonitorResult<number>>` | Weighted average usage across all disks | ✅ All |
+| `stats()` | `Promise<MonitorResult<DiskStats[]>>` | I/O statistics summary (requires `includeStats`) | ⚠️ Limited |
+| `mounts()` | `Promise<MonitorResult<MountPoint[]>>` | Mount configuration details | ✅ All |
+| `filesystems()` | `Promise<MonitorResult<FileSystem[]>>` | Available filesystem types | ✅ All |
+| `spaceOverview()` | `Promise<MonitorResult<{ total: DataSize; used: DataSize; available: DataSize; usagePercentage: number; disks: number }>>` | Aggregate space usage | ✅ All |
+| `healthCheck()` | `Promise<MonitorResult<{ status: 'healthy' | 'warning' | 'critical'; issues: string[] }>>` | Basic disk health | ⚠️ Limited |
 
 ### 🌐 Network Monitor
 
@@ -408,26 +442,29 @@ const interfaces = await osutils.network.interfaces();
 if (interfaces.success) {
   interfaces.data.forEach(iface => {
     console.log('Interface:', iface.name);
-    console.log('RX Bytes:', iface.rx.bytes.format());
-    console.log('TX Bytes:', iface.tx.bytes.format());
-    console.log('RX Packets:', iface.rx.packets);
-    console.log('TX Packets:', iface.tx.packets);
+    console.log('Addresses:', iface.addresses);
+    console.log('State:', iface.state);
   });
 }
 
 // Network overview
 const overview = await osutils.network.overview();
 if (overview.success) {
-  console.log('Total RX:', overview.data.totalRx.format());
-  console.log('Total TX:', overview.data.totalTx.format());
+  console.log('Total RX:', overview.data.totalRxBytes.toString('MB'));
+  console.log('Total TX:', overview.data.totalTxBytes.toString('MB'));
 }
 
-// Real-time network monitoring
-const netSub = osutils.network.monitor(5000, (stats) => {
-  console.log('Network activity:', {
-    download: stats.totalRx.megabytes + ' MB',
-    upload: stats.totalTx.megabytes + ' MB'
+// Per-interface statistics
+const stats = await osutils.network.statsAsync();
+if (stats.success) {
+  stats.data.forEach(stat => {
+    console.log(`${stat.interface}: RX ${stat.rxBytes.toString('MB')} | TX ${stat.txBytes.toString('MB')}`);
   });
+}
+
+// Real-time interface monitoring (returns NetworkInterface[] snapshots)
+const netSub = osutils.network.monitor(5000, (interfacesSnapshot) => {
+  console.log('Active interfaces:', interfacesSnapshot.filter(iface => iface.state === 'up').map(iface => iface.name));
 });
 ```
 
@@ -436,11 +473,15 @@ const netSub = osutils.network.monitor(5000, (stats) => {
 | Method | Return Type | Description | Platform Support |
 |--------|-------------|-------------|------------------|
 | `interfaces()` | `Promise<MonitorResult<NetworkInterface[]>>` | All network interfaces | ✅ All |
-| `overview()` | `Promise<MonitorResult<NetworkOverview>>` | Total network statistics | ✅ All |
-| `stats(interface?)` | `Promise<MonitorResult<NetworkStats>>` | Interface-specific stats | ✅ All |
-| `speed(interval?)` | `Promise<MonitorResult<NetworkSpeed>>` | Network speed calculation | ✅ All |
-| `connections()` | `Promise<MonitorResult<Connection[]>>` | Active connections | ⚠️ Limited |
-| `gateway()` | `Promise<MonitorResult<GatewayInfo>>` | Default gateway info | ✅ All |
+| `interfaceByName(name)` | `Promise<MonitorResult<NetworkInterface | null>>` | Single interface lookup | ✅ All |
+| `overview()` | `Promise<MonitorResult<{ interfaces: number; activeInterfaces: number; totalRxBytes: DataSize; totalTxBytes: DataSize; totalPackets: number; totalErrors: number }>>` | Aggregate link counters | ✅ All |
+| `statsAsync()` | `Promise<MonitorResult<NetworkStats[]>>` | Interface statistics (requires `includeInterfaceStats`) | ✅ All |
+| `statsByInterface(name)` | `Promise<MonitorResult<NetworkStats | null>>` | Stats for a specific interface | ✅ All |
+| `bandwidth()` | `Promise<MonitorResult<{ interval: number; interfaces: Array<{ interface: string; rxSpeed: number; txSpeed: number; rxSpeedFormatted: string; txSpeedFormatted: string }> }>>` | Calculated throughput over an interval | ⚠️ Limited |
+| `connections()` | `Promise<MonitorResult<any[]>>` | Active connections (requires `includeConnections`) | ⚠️ Limited |
+| `gateway()` | `Promise<MonitorResult<{ gateway: string; interface: string } | null>>` | Default gateway info | ✅ All |
+| `publicIP()` | `Promise<MonitorResult<{ ipv4?: string; ipv6?: string }>>` | Cached public IP lookup (placeholder) | ⚠️ Limited |
+| `healthCheck()` | `Promise<MonitorResult<{ status: 'healthy' | 'warning' | 'critical'; issues: string[] }>>` | Network health summary | ⚠️ Limited |
 
 ### 🔄 Process Monitor
 
@@ -454,24 +495,25 @@ if (processes.success) {
 
   // Show top 5 CPU consumers
   const topCpu = processes.data
-    .sort((a, b) => b.cpu - a.cpu)
+    .filter(proc => proc.cpuUsage > 0)
+    .sort((a, b) => b.cpuUsage - a.cpuUsage)
     .slice(0, 5);
 
   topCpu.forEach(proc => {
-    console.log(`${proc.name} (${proc.pid}): ${proc.cpu}% CPU`);
+    console.log(`${proc.name} (${proc.pid}): ${proc.cpuUsage.toFixed(2)}% CPU`);
   });
 }
 
 // Find specific processes
-const nodeProcesses = await osutils.process.findByName('node');
+const nodeProcesses = await osutils.process.byName('node');
 if (nodeProcesses.success) {
   console.log('Node.js processes:', nodeProcesses.data.length);
 }
 
 // Current process info
-const currentProc = await osutils.process.info(process.pid);
-if (currentProc.success) {
-  console.log('Current process memory:', currentProc.data.memory.format());
+const currentProc = await osutils.process.byPid(process.pid);
+if (currentProc.success && currentProc.data) {
+  console.log('Current process memory:', currentProc.data.memoryUsage.toString('MB'));
 }
 ```
 
@@ -479,12 +521,14 @@ if (currentProc.success) {
 
 | Method | Return Type | Description | Platform Support |
 |--------|-------------|-------------|------------------|
-| `list(options?)` | `Promise<MonitorResult<ProcessInfo[]>>` | All running processes | ✅ All |
-| `info(pid)` | `Promise<MonitorResult<ProcessInfo>>` | Specific process details | ✅ All |
-| `findByName(name)` | `Promise<MonitorResult<ProcessInfo[]>>` | Find by process name | ✅ All |
-| `topCpu(limit?)` | `Promise<MonitorResult<ProcessInfo[]>>` | Top CPU consumers | ✅ All |
-| `topMemory(limit?)` | `Promise<MonitorResult<ProcessInfo[]>>` | Top memory consumers | ✅ All |
-| `tree()` | `Promise<MonitorResult<ProcessTree[]>>` | Process hierarchy | ⚠️ Limited |
+| `list(options?)` | `Promise<MonitorResult<ProcessInfo[]>>` | All running processes (optional filters) | ✅ All |
+| `byPid(pid)` | `Promise<MonitorResult<ProcessInfo | null>>` | Specific process details | ✅ All |
+| `byName(name)` | `Promise<MonitorResult<ProcessInfo[]>>` | Find by process name | ✅ All |
+| `topByCpu(limit?)` | `Promise<MonitorResult<ProcessInfo[]>>` | Top CPU consumers | ✅ All |
+| `topByMemory(limit?)` | `Promise<MonitorResult<ProcessInfo[]>>` | Top memory consumers | ✅ All |
+| `children(parentPid)` | `Promise<MonitorResult<ProcessInfo[]>>` | Child processes (requires config) | ⚠️ Limited |
+| `tree(rootPid?)` | `Promise<MonitorResult<any>>` | Process hierarchy | ⚠️ Limited |
+| `stats()` | `Promise<MonitorResult<{ total: number; running: number; sleeping: number; waiting: number; zombie: number; stopped: number; unknown: number; totalCpuUsage: number; totalMemoryUsage: DataSize }>>` | Aggregate process statistics | ✅ All |
 | `kill(pid, signal?)` | `Promise<MonitorResult<boolean>>` | Terminate process | ⚠️ Limited |
 
 ### 🖥️ System Monitor
@@ -496,24 +540,24 @@ General system information and health monitoring.
 const sysInfo = await osutils.system.info();
 if (sysInfo.success) {
   console.log('Hostname:', sysInfo.data.hostname);
-  console.log('OS:', sysInfo.data.osName);
-  console.log('Version:', sysInfo.data.osVersion);
-  console.log('Architecture:', sysInfo.data.arch);
   console.log('Platform:', sysInfo.data.platform);
+  console.log('Distro:', sysInfo.data.distro);
+  console.log('Release:', sysInfo.data.release);
+  console.log('Architecture:', sysInfo.data.arch);
 }
 
 // System uptime
 const uptime = await osutils.system.uptime();
 if (uptime.success) {
-  const days = Math.floor(uptime.data / (24 * 60 * 60));
-  const hours = Math.floor((uptime.data % (24 * 60 * 60)) / (60 * 60));
-  console.log(`Uptime: ${days} days, ${hours} hours`);
+  console.log('Uptime (ms):', uptime.data.uptime);
+  console.log('Boot time:', new Date(uptime.data.bootTime).toISOString());
+  console.log('Friendly uptime:', uptime.data.uptimeFormatted);
 }
 
 // Active users
 const users = await osutils.system.users();
 if (users.success) {
-  console.log('Logged users:', users.data.map(u => u.name));
+  console.log('Logged users:', users.data.map(u => u.username));
 }
 ```
 
@@ -522,12 +566,13 @@ if (users.success) {
 | Method | Return Type | Description | Platform Support |
 |--------|-------------|-------------|------------------|
 | `info()` | `Promise<MonitorResult<SystemInfo>>` | Complete system information | ✅ All |
-| `uptime()` | `Promise<MonitorResult<number>>` | Uptime in seconds | ✅ All |
-| `bootTime()` | `Promise<MonitorResult<Date>>` | Boot timestamp | ✅ All |
-| `users()` | `Promise<MonitorResult<UserInfo[]>>` | Currently logged users | ✅ All |
-| `hostname()` | `Promise<MonitorResult<string>>` | System hostname | ✅ All |
-| `osInfo()` | `Promise<MonitorResult<OSInfo>>` | Operating system details | ✅ All |
-| `healthCheck()` | `Promise<MonitorResult<HealthStatus>>` | System health overview | ✅ All |
+| `uptime()` | `Promise<MonitorResult<{ uptime: number; uptimeFormatted: string; bootTime: number }>>` | Uptime and derived timestamps | ✅ All |
+| `load()` | `Promise<MonitorResult<LoadAverage & { normalized: LoadAverage; status: 'low' | 'normal' | 'high' | 'critical' }>>` | Load averages and health status | ⚠️ Limited |
+| `users()` | `Promise<MonitorResult<Array<{ username: string; terminal: string; host: string; loginTime: number }>>>` | Currently logged users | ⚠️ Platform |
+| `services()` | `Promise<MonitorResult<Array<{ name: string; status: string; enabled: boolean }>>>` | Service status (requires config) | ⚠️ Limited |
+| `overview()` | `Promise<MonitorResult<{ system: { hostname: string; platform: string; uptime: string; loadStatus: string }; resources: { cpuUsage: number; memoryUsage: number; diskUsage: number; networkActivity: boolean }; counts: { processes: number; users: number; services?: number }; health: { status: 'healthy' | 'warning' | 'critical'; issues: string[] } }>>` | Synthetic summary | ⚠️ Limited |
+| `time()` | `Promise<MonitorResult<{ current: number; timezone: string; utcOffset: number; formatted: string; bootTime?: number }>>` | Current system time metadata | ✅ All |
+| `healthCheck()` | `Promise<MonitorResult<{ status: 'healthy' | 'warning' | 'critical'; checks: Record<string, boolean>; issues: string[]; score: number }>>` | System health overview | ⚠️ Limited |
 
 ## 🌍 Platform Compatibility
 
@@ -576,13 +621,25 @@ const osutils = new OSUtils({ debug: true });
 // Comprehensive system overview
 const overview = await osutils.overview();
 console.log('📊 System Overview:');
-console.log('CPU Usage:', overview.cpu.usage + '%');
-console.log('Memory Usage:', overview.memory.usagePercentage + '%');
-console.log('Disk Usage:', overview.disk.usagePercentage + '%');
-console.log('Network RX:', overview.network.totalRx.format());
-console.log('Network TX:', overview.network.totalTx.format());
-console.log('Processes:', overview.process.total);
-console.log('Uptime:', Math.floor(overview.system.uptime / 3600) + ' hours');
+if (overview.cpu.usage != null) {
+  console.log('CPU Usage:', overview.cpu.usage + '%');
+}
+if (overview.memory?.usagePercentage != null) {
+  console.log('Memory Usage:', overview.memory.usagePercentage + '%');
+}
+if (overview.disk?.usagePercentage != null) {
+  console.log('Disk Usage:', overview.disk.usagePercentage + '%');
+}
+if (overview.network) {
+  console.log('Network RX:', overview.network.totalRxBytes.toString('MB'));
+  console.log('Network TX:', overview.network.totalTxBytes.toString('MB'));
+}
+if (overview.processes) {
+  console.log('Processes:', overview.processes.total);
+}
+if (overview.system?.uptime != null) {
+  console.log('Uptime:', (overview.system.uptime / 3600).toFixed(1) + ' hours');
+}
 
 // System health check
 const health = await osutils.healthCheck();
@@ -590,16 +647,7 @@ console.log('🏥 System Health:', health.status); // 'healthy' | 'warning' | 'c
 
 if (health.issues.length > 0) {
   console.log('⚠️ Issues detected:');
-  health.issues.forEach(issue => {
-    console.log(`- ${issue.component}: ${issue.message}`);
-  });
-}
-
-if (health.recommendations.length > 0) {
-  console.log('💡 Recommendations:');
-  health.recommendations.forEach(rec => {
-    console.log(`- ${rec}`);
-  });
+  health.issues.forEach(issue => console.log(`- ${issue}`));
 }
 ```
 
@@ -608,55 +656,74 @@ if (health.recommendations.length > 0) {
 ```typescript
 // Create monitoring dashboard
 class SystemDashboard {
-  private subscriptions: any[] = [];
+  private intervals: NodeJS.Timeout[] = [];
   private alerts: string[] = [];
 
   start() {
     console.log('🚀 Starting system monitoring dashboard...');
 
-    // CPU monitoring
-    const cpuSub = osutils.cpu.monitor(1000, (usage) => {
-      this.updateDisplay('CPU', usage + '%');
-      if (usage > 80) {
-        this.addAlert(`⚠️ High CPU usage: ${usage}%`);
-      }
-    });
-
-    // Memory monitoring
-    const memSub = osutils.memory.monitor(2000, (info) => {
-      const percent = info.usagePercentage;
-      this.updateDisplay('Memory', percent + '%');
-      if (percent > 85) {
-        this.addAlert(`⚠️ High memory usage: ${percent}%`);
-      }
-    });
-
-    // Disk monitoring
-    const diskSub = osutils.disk.monitor(10000, (info) => {
-      const rootDisk = info.find(d => d.mountPoint === '/');
-      if (rootDisk) {
-        this.updateDisplay('Disk', rootDisk.usagePercentage + '%');
-        if (rootDisk.usagePercentage > 90) {
-          this.addAlert(`⚠️ Disk almost full: ${rootDisk.usagePercentage}%`);
+    // CPU usage polling
+    this.intervals.push(setInterval(async () => {
+      const result = await osutils.cpu.usage();
+      if (result.success) {
+        const value = result.data.toFixed(2);
+        this.updateDisplay('CPU', `${value}%`);
+        if (result.data > 80) {
+          this.addAlert(`⚠️ High CPU usage: ${value}%`);
         }
       }
-    });
+    }, 1000));
 
-    // Network monitoring
-    const netSub = osutils.network.monitor(5000, (stats) => {
-      this.updateDisplay('Network', `↓${stats.totalRx.format()} ↑${stats.totalTx.format()}`);
-    });
+    // Memory usage polling
+    this.intervals.push(setInterval(async () => {
+      const result = await osutils.memory.info();
+      if (result.success) {
+        const percent = result.data.usagePercentage;
+        this.updateDisplay('Memory', `${percent.toFixed(2)}%`);
+        if (percent > 85) {
+          this.addAlert(`⚠️ High memory usage: ${percent.toFixed(2)}%`);
+        }
+      }
+    }, 2000));
 
-    this.subscriptions = [cpuSub, memSub, diskSub, netSub];
+    // Disk usage polling
+    this.intervals.push(setInterval(async () => {
+      const result = await osutils.disk.usageByMountPoint('/');
+      if (result.success && result.data) {
+        this.updateDisplay('Disk', `${result.data.usagePercentage.toFixed(1)}%`);
+        if (result.data.usagePercentage > 90) {
+          this.addAlert(`⚠️ Disk almost full: ${result.data.usagePercentage.toFixed(1)}%`);
+        }
+      }
+    }, 10000));
+
+    // Network statistics polling
+    this.intervals.push(setInterval(async () => {
+      const stats = await osutils.network.statsAsync();
+      if (stats.success) {
+        const aggregate = stats.data.reduce(
+          (acc, item) => ({
+            rx: acc.rx + item.rxBytes.toBytes(),
+            tx: acc.tx + item.txBytes.toBytes()
+          }),
+          { rx: 0, tx: 0 }
+        );
+
+        this.updateDisplay(
+          'Network',
+          `↓${(aggregate.rx / 1024 / 1024).toFixed(2)} MB ↑${(aggregate.tx / 1024 / 1024).toFixed(2)} MB`
+        );
+      }
+    }, 5000));
 
     // Alert checker
-    setInterval(() => {
+    this.intervals.push(setInterval(() => {
       if (this.alerts.length > 0) {
         console.log('🚨 Active Alerts:');
         this.alerts.forEach(alert => console.log(alert));
         this.alerts = [];
       }
-    }, 10000);
+    }, 10000));
   }
 
   private updateDisplay(metric: string, value: string) {
@@ -669,7 +736,8 @@ class SystemDashboard {
   }
 
   stop() {
-    this.subscriptions.forEach(sub => sub.unsubscribe());
+    this.intervals.forEach(interval => clearInterval(interval));
+    this.intervals = [];
     console.log('⏹️ Monitoring stopped');
   }
 }
@@ -694,7 +762,6 @@ const osutils = new OSUtils({
 
   // Execution settings
   timeout: 15000,
-  retries: 3,
 
   // Debug mode
   debug: false,
@@ -712,7 +779,8 @@ const osutils = new OSUtils({
     timeout: 10000
   },
   network: {
-    cacheTTL: 2000     // Medium refresh for network
+    cacheTTL: 2000,    // Medium refresh for network
+    includeInterfaceStats: true
   },
   process: {
     cacheTTL: 10000    // Slow refresh for processes
@@ -723,15 +791,16 @@ const osutils = new OSUtils({
 osutils.configureCache({
   enabled: true,
   maxSize: 2000,
-  defaultTTL: 8000,
-  cleanupInterval: 60000
+  defaultTTL: 8000
 });
 
 // Cache statistics
 const cacheStats = osutils.getCacheStats();
-console.log('Cache hit rate:', (cacheStats.hits / cacheStats.requests * 100).toFixed(1) + '%');
-console.log('Cache entries:', cacheStats.size);
-console.log('Memory used:', cacheStats.memoryUsage.format());
+if (cacheStats) {
+  console.log('Cache hit rate:', cacheStats.hitRate.toFixed(1) + '%');
+  console.log('Cache entries:', cacheStats.size);
+  console.log('Estimated memory used:', (cacheStats.memoryUsage / (1024 * 1024)).toFixed(2) + ' MB');
+}
 
 // Clear cache when needed
 osutils.clearCache();
@@ -760,8 +829,8 @@ class SystemMonitoringService {
         this.osutils.system.info()
       ]);
 
-      const data: any = {};
-      const errors: MonitorError[] = [];
+      const data: Record<string, unknown> = {};
+      const errors: Array<{ component: string; error: MonitorError | Error; timestamp: Date }> = [];
 
       results.forEach((result, index) => {
         const keys = ['cpu', 'memory', 'disk', 'network', 'system'];
@@ -770,18 +839,20 @@ class SystemMonitoringService {
         if (result.status === 'fulfilled' && result.value.success) {
           data[key] = result.value.data;
         } else {
-          const error = result.status === 'fulfilled'
+          const monitorError = result.status === 'fulfilled'
             ? result.value.error
-            : new Error(result.reason);
+            : (result.reason instanceof MonitorError
+              ? result.reason
+              : MonitorError.createCommandFailed(process.platform, 'unknown', { reason: result.reason }));
 
           errors.push({
             component: key,
-            error,
+            error: monitorError,
             timestamp: new Date()
           });
 
           // Handle specific error types
-          this.handleComponentError(key, error);
+          this.handleComponentError(key, monitorError);
         }
       });
 
