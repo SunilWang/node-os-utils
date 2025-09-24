@@ -677,11 +677,14 @@ export class MacOSAdapter extends BasePlatformAdapter {
 
       if (fields.length >= 8) {
         const [pid, ppid, cmd, pcpu, pmem, rss, state, user, ...argsParts] = fields;
+        const command = argsParts.length > 0 ? argsParts.join(' ').trim() : cmd;
 
         processes.push({
           pid: this.safeParseInt(pid),
           ppid: this.safeParseInt(ppid),
-          command: [cmd, ...argsParts].join(' ').trim(),
+          name: cmd,
+          comm: cmd,
+          command,
           cpuUsage: this.safeParseNumber(pcpu),
           memoryUsage: this.safeParseInt(rss) * 1024,
           memoryPercentage: this.safeParseNumber(pmem),
