@@ -267,8 +267,12 @@ export class WindowsAdapter extends BasePlatformAdapter {
         rxErrors: item.InboundErrors || 0,
         txErrors: item.OutboundErrors || 0
       }));
-    } catch (error) {
-      throw this.createUnsupportedError('network.stats');
+    } catch (error: any) {
+      if (error instanceof MonitorError) {
+        return [];
+      }
+
+      return [];
     }
   }
 
@@ -646,13 +650,20 @@ export class WindowsAdapter extends BasePlatformAdapter {
         const wmi = await this.executePowerShell(
           'Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,FileSystem,Size,FreeSpace | ConvertTo-Json'
         );
-        return this.ensureArray(wmi).map((disk: any) => ({
-          name: disk.DeviceID?.replace(':', ''),
-          root: disk.DeviceID,
-          used: this.safeParseNumber(disk.Size) - this.safeParseNumber(disk.FreeSpace),
-          free: this.safeParseNumber(disk.FreeSpace),
-          filesystem: disk.FileSystem
-        }));
+        return this.ensureArray(wmi).map((disk: any) => {
+          const size = this.safeParseNumber(disk.Size);
+          const free = Math.max(0, this.safeParseNumber(disk.FreeSpace));
+          const total = size > 0 ? size : free;
+          const used = size > 0 ? Math.max(0, size - free) : Math.max(0, total - free);
+
+          return {
+            name: disk.DeviceID?.replace(':', ''),
+            root: disk.DeviceID,
+            used,
+            free,
+            filesystem: disk.FileSystem
+          };
+        });
       } catch (error) {
         throw this.createCommandError('getFileSystemDrives', error);
       }
