@@ -192,7 +192,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
    * 获取默认网关信息
    */
   async gateway(): Promise<MonitorResult<{
-    gateway: string;
+    gateway: string | null;
     interface: string;
   } | null>> {
     const cacheKey = 'network-gateway';
@@ -568,14 +568,17 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
   /**
    * 转换网关信息
    */
-  private transformGatewayInfo(rawData: any): { gateway: string; interface: string } | null {
-    if (!rawData || !rawData.gateway) {
+  private transformGatewayInfo(rawData: any): { gateway: string | null; interface: string } | null {
+    // 网关信息在 Linux 点对点链路中可能只有接口（例如 `default dev ppp0`），此时仍视为有效路由
+    if (!rawData || (rawData.gateway == null && rawData.interface == null && rawData.iface == null && rawData.device == null)) {
       return null;
     }
 
     return {
-      gateway: rawData.gateway,
-      interface: rawData.interface || 'unknown'
+      // 优先使用显式网关地址，若缺失则回退到 `address` 字段，保持与适配器输出一致
+      gateway: rawData.gateway ?? rawData.address ?? null,
+      // 兼容不同平台字段命名（interface/iface/device），确保能准确识别默认出口
+      interface: rawData.interface || rawData.iface || rawData.device || 'unknown'
     };
   }
 

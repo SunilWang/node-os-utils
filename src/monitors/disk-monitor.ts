@@ -416,17 +416,39 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
       return [];
     }
 
-    return rawData.map(stats => ({
-      device: stats.device || 'unknown',
-      readCount: this.safeParseNumber(stats.reads || stats.read_ios),
-      writeCount: this.safeParseNumber(stats.writes || stats.write_ios),
-      readBytes: new DataSize(this.safeParseNumber(stats.readBytes || stats.read_sectors * 512)),
-      writeBytes: new DataSize(this.safeParseNumber(stats.writeBytes || stats.write_sectors * 512)),
-      readTime: this.safeParseNumber(stats.readTime || stats.read_ticks),
-      writeTime: this.safeParseNumber(stats.writeTime || stats.write_ticks),
-      ioTime: this.safeParseNumber(stats.ioTime || stats.io_ticks),
-      weightedIOTime: this.safeParseNumber(stats.weightedIOTime || stats.time_in_queue)
-    }));
+    return rawData.map(stats => {
+      const readCount = this.safeParseNumber(stats.reads || stats.read_ios);
+      const writeCount = this.safeParseNumber(stats.writes || stats.write_ios);
+
+      const readSectors = stats.readSectors ?? stats.read_sectors;
+      const writeSectors = stats.writeSectors ?? stats.write_sectors;
+
+      const readBytesRaw = stats.readBytes ?? stats.read_bytes;
+      const writeBytesRaw = stats.writeBytes ?? stats.write_bytes;
+
+      // Linux 适配器默认返回扇区数量，需要在此统一换算为字节；如果已有明确字节值则直接使用
+      const readSectorsValue = readSectors !== undefined ? this.safeParseNumber(readSectors) : 0;
+      const writeSectorsValue = writeSectors !== undefined ? this.safeParseNumber(writeSectors) : 0;
+
+      const readBytesValue = readBytesRaw !== undefined && readBytesRaw !== null
+        ? this.safeParseNumber(readBytesRaw)
+        : readSectorsValue * 512;
+      const writeBytesValue = writeBytesRaw !== undefined && writeBytesRaw !== null
+        ? this.safeParseNumber(writeBytesRaw)
+        : writeSectorsValue * 512;
+
+      return {
+        device: stats.device || 'unknown',
+        readCount,
+        writeCount,
+        readBytes: new DataSize(readBytesValue),
+        writeBytes: new DataSize(writeBytesValue),
+        readTime: this.safeParseNumber(stats.readTime || stats.read_ticks),
+        writeTime: this.safeParseNumber(stats.writeTime || stats.write_ticks),
+        ioTime: this.safeParseNumber(stats.ioTime || stats.io_ticks),
+        weightedIOTime: this.safeParseNumber(stats.weightedIOTime || stats.time_in_queue)
+      };
+    });
   }
 
   /**
@@ -492,7 +514,8 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
 
     // 如果配置了特定挂载点，只包含这些挂载点
     if (this.diskConfig.mountPoints && this.diskConfig.mountPoints.length > 0) {
-      const mountPoint = disk.mountpoint || disk.mount || '/';
+      // 适配不同来源字段（mountPoint/mountpoint/mount），确保定向监控精确生效
+      const mountPoint = disk.mountPoint || disk.mountpoint || disk.mount || '/';
       return this.diskConfig.mountPoints.includes(mountPoint);
     }
 

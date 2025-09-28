@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 
 import { LinuxAdapter } from '../../../src/adapters/linux-adapter';
+import { MonitorError } from '../../../src/types/errors';
 import os from 'os';
 
 describe('LinuxAdapter 内部解析逻辑', () => {
@@ -88,5 +89,70 @@ describe('LinuxAdapter 内部解析逻辑', () => {
     expect(result.startTime).to.be.at.most(now);
     const lowerBound = systemUptimeMs > 0 ? now - systemUptimeMs - 1000 : now - 1000;
     expect(result.startTime).to.be.at.least(lowerBound);
+  });
+
+  it('应优先使用 uname -m 解析体系结构', () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+
+    const uname = 'Linux test-host 5.15.0-89-generic #99-Ubuntu SMP PREEMPT Fri x86_64 x86_64 x86_64 GNU/Linux';
+    const version = 'Ubuntu 5.15.0-89-generic';
+    const uptime = '12345.67 4567.89';
+    const loadavg = '0.10 0.20 0.30 1/234 567';
+    const machine = 'x86_64\n';
+
+    const info = internal.parseSystemInfo(uname, version, uptime, loadavg, machine);
+    expect(info.arch).to.equal('x86_64');
+  });
+
+  it('在缺少 uname -m 时仍能推断常见架构', () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+
+    const uname = 'Linux test 6.5.0-21 #1 SMP PREEMPT_DYNAMIC Wed aarch64 GNU/Linux';
+    const version = '#1 SMP PREEMPT';
+    const uptime = '1000.00 2000.00';
+    const loadavg = '0.50 0.60 0.70 1/1 2';
+
+    const info = internal.parseSystemInfo(uname, version, uptime, loadavg, '');
+    expect(info.arch.toLowerCase()).to.equal('aarch64');
+  });
+
+  it('应正确解析多种默认网关格式', () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+
+    const viaOutput = 'default via 192.168.1.1 dev eth0 proto dhcp metric 100';
+    const directOutput = 'default dev ppp0 scope link';
+
+    const viaResult = internal.parseDefaultGateway(viaOutput);
+    expect(viaResult).to.deep.equal({ gateway: '192.168.1.1', interface: 'eth0' });
+
+    const directResult = internal.parseDefaultGateway(directOutput);
+    expect(directResult).to.deep.equal({ gateway: null, interface: 'ppp0' });
+  });
+
+  it('网络命令回退失败时应保留主次错误', async () => {
+    const adapter = new LinuxAdapter();
+    let callCount = 0;
+
+    (adapter as any).executeCommand = async (command: string) => {
+      callCount += 1;
+      if (command === 'ip addr show') {
+        throw MonitorError.createCommandFailed('linux', command, { reason: 'ip missing' });
+      }
+      throw MonitorError.createCommandFailed('linux', command, { reason: 'ifconfig missing' });
+    };
+
+    try {
+      await adapter.getNetworkInterfaces();
+      expect.fail('应该抛出 MonitorError');
+    } catch (error: any) {
+      expect(error).to.be.instanceOf(MonitorError);
+      expect(error.details.primary.details.reason).to.equal('ip missing');
+      expect(error.details.fallback.details.reason).to.equal('ifconfig missing');
+    }
+
+    expect(callCount).to.equal(2);
   });
 });

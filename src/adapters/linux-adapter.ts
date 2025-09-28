@@ -226,14 +226,17 @@ export class LinuxAdapter extends BasePlatformAdapter {
       const result = await this.executeCommand('ip addr show');
       this.validateCommandResult(result, 'ip addr show');
       return this.parseNetworkInterfaces(result.stdout);
-    } catch (error) {
+    } catch (primaryError) {
       // 回退到 ifconfig
       try {
         const result = await this.executeCommand('ifconfig');
         this.validateCommandResult(result, 'ifconfig');
         return this.parseIfconfigOutput(result.stdout);
-      } catch {
-        throw this.createCommandError('getNetworkInterfaces', error);
+      } catch (fallbackError) {
+        throw this.createCommandError('getNetworkInterfaces', {
+          primary: this.summarizeErrorDetails(primaryError),
+          fallback: this.summarizeErrorDetails(fallbackError)
+        });
       }
     }
   }
@@ -302,23 +305,26 @@ export class LinuxAdapter extends BasePlatformAdapter {
    */
   async getSystemInfo(): Promise<any> {
     try {
-      const [uname, version, uptime, loadavg] = await Promise.allSettled([
+      const [uname, version, uptime, loadavg, machine] = await Promise.allSettled([
         this.executeCommand('uname -a'),
         this.readFile(this.paths.version),
         this.readFile(this.paths.uptime),
-        this.readFile(this.paths.loadavg)
+        this.readFile(this.paths.loadavg),
+        this.executeCommand('uname -m')
       ]).then(results => [
         results[0].status === 'fulfilled' ? results[0].value : null,
         results[1].status === 'fulfilled' ? results[1].value : '',
         results[2].status === 'fulfilled' ? results[2].value : '',
-        results[3].status === 'fulfilled' ? results[3].value : ''
+        results[3].status === 'fulfilled' ? results[3].value : '',
+        results[4].status === 'fulfilled' ? results[4].value : null
       ]);
 
       const unameOutput = typeof uname === 'string' ? uname : uname?.stdout || '';
       const versionOutput = typeof version === 'string' ? version : version?.stdout || '';
       const uptimeOutput = typeof uptime === 'string' ? uptime : uptime?.stdout || '';
       const loadavgOutput = typeof loadavg === 'string' ? loadavg : loadavg?.stdout || '';
-      return this.parseSystemInfo(unameOutput, versionOutput, uptimeOutput, loadavgOutput);
+      const machineOutput = typeof machine === 'string' ? machine : machine?.stdout || '';
+      return this.parseSystemInfo(unameOutput, versionOutput, uptimeOutput, loadavgOutput, machineOutput);
     } catch (error) {
       throw this.createCommandError('getSystemInfo', error);
     }
@@ -864,7 +870,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
     };
   }
 
-  private parseSystemInfo(uname: string, version: string, uptime: string, loadavg: string): any {
+  private parseSystemInfo(uname: string, version: string, uptime: string, loadavg: string, machine?: string): any {
     const unameFields = uname.trim().split(' ');
     const uptimeFields = uptime.trim().split(' ');
     const loadFields = loadavg.trim().split(' ');
@@ -873,12 +879,14 @@ export class LinuxAdapter extends BasePlatformAdapter {
     const uptimeMs = uptimeSeconds * 1000;
     const bootTime = Date.now() - uptimeMs;
 
+    const architecture = this.resolveArchitecture(unameFields, machine);
+
     return {
       hostname: unameFields[1] || 'Unknown',
       platform: 'linux', // 统一返回标准平台名称，与 os.platform() 保持一致
       release: unameFields[2] || 'Unknown',
       version: version.trim(),
-      arch: unameFields[4] || 'Unknown',
+      arch: architecture,
       uptime: uptimeMs,
       uptimeSeconds,
       bootTime,
@@ -1187,11 +1195,39 @@ export class LinuxAdapter extends BasePlatformAdapter {
   private parseDefaultGateway(output: string): any {
     const lines = output.split('\n');
     for (const line of lines) {
-      const fields = line.trim().split(/\s+/);
-      if (fields.length >= 3) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith('default')) {
+        continue;
+      }
+
+      const fields = trimmed.split(/\s+/);
+      if (fields.length === 0) {
+        continue;
+      }
+
+      let gateway: string | null = null;
+      let interfaceName: string | null = null;
+
+      for (let i = 0; i < fields.length; i++) {
+        const token = fields[i];
+        if (token === 'via' && fields[i + 1]) {
+          gateway = fields[i + 1];
+        } else if (token === 'dev' && fields[i + 1]) {
+          interfaceName = fields[i + 1];
+        }
+      }
+
+      if (!gateway && fields.length > 1) {
+        const candidate = fields[1];
+        if (candidate && candidate !== 'dev' && candidate !== 'proto' && candidate !== 'metric' && candidate !== 'scope') {
+          gateway = candidate;
+        }
+      }
+
+      if (gateway !== null || interfaceName !== null) {
         return {
-          gateway: fields[2],
-          interface: fields[4] || 'unknown'
+          gateway: gateway ?? null,
+          interface: interfaceName ?? 'unknown'
         };
       }
     }
@@ -1271,5 +1307,75 @@ export class LinuxAdapter extends BasePlatformAdapter {
     }
 
     await new Promise<void>(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * 推断主机架构
+   *
+   * 同时考虑 `uname -m`、`uname -a` 末尾字段与 `os.arch()`，过滤掉 `SMP` 等噪声标记，
+   * 尽可能返回准确的 CPU 架构标识。
+   */
+  private resolveArchitecture(unameFields: string[], machineOutput?: string): string {
+    const archPattern = /^(x86_64|amd64|arm64|aarch64|armv\d+l?|i[3-6]86|ppc64le|ppc64|s390x|mips64el|mips64|mipsel|loongarch\d*|riscv\d+|sparc64)$/i;
+    const normalize = (value?: string | null) => value?.trim() || '';
+
+    const candidates: Array<string | undefined> = [];
+
+    const normalizedMachine = normalize(machineOutput);
+    if (normalizedMachine) {
+      candidates.push(normalizedMachine);
+    }
+
+    for (let i = unameFields.length - 1; i >= 0; i--) {
+      const token = normalize(unameFields[i]);
+      if (token) {
+        candidates.push(token);
+      }
+    }
+
+    try {
+      const runtimeArch = normalize(os.arch());
+      if (runtimeArch) {
+        candidates.push(runtimeArch);
+      }
+    } catch {
+      // ignore runtime arch fetch errors
+    }
+
+    for (const candidate of candidates) {
+      if (candidate && archPattern.test(candidate)) {
+        return candidate;
+      }
+    }
+
+    return 'Unknown';
+  }
+
+  /**
+   * 归纳命令执行阶段的错误信息
+   *
+   * 便于在调用栈中保留主、次命令的失败原因，帮助上层监控器输出更具可读性的诊断数据。
+   */
+  private summarizeErrorDetails(error: unknown): Record<string, any> {
+    if (!error) {
+      return { message: 'Unknown error' };
+    }
+
+    if (error instanceof MonitorError) {
+      return {
+        code: error.code,
+        message: error.message,
+        details: error.details || null
+      };
+    }
+
+    if (error instanceof Error) {
+      return {
+        name: error.name,
+        message: error.message
+      };
+    }
+
+    return { message: String(error) };
   }
 }
