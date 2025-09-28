@@ -54,12 +54,14 @@
   "homepage": "https://github.com/SunilWang/node-os-utils#readme",
   "keywords": [
     "os",
-    "system",
+    "system-monitor",
     "monitoring",
     "cpu",
     "memory",
     "disk",
     "network",
+    "process-monitor",
+    "server-monitoring",
     "typescript",
     "cross-platform",
     "linux",
@@ -68,11 +70,9 @@
     "performance",
     "metrics",
     "realtime",
-    "server",
+    "observability",
     "netstat",
-    "processes",
-    "openfiles",
-    "harddrive"
+    "processes"
   ],
   "devDependencies": {
     "typescript": "^5.4.0",
