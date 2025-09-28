@@ -198,14 +198,65 @@ export class CrossPlatformValidator {
    * 根据当前平台选择合适的验证器
    */
   static validateSystemInfo(info: any): boolean {
-    if (PlatformUtils.isLinux()) {
-      return LinuxTestUtils.validateMemoryInfo(info)
-    } else if (PlatformUtils.isMacOS()) {
-      return MacOSTestUtils.validateDiskInfo(info)
-    } else if (PlatformUtils.isWindows()) {
-      return WindowsTestUtils.validateMemoryInfo(info)
+    if (!TestValidators.isValidObject(info)) {
+      return false
     }
-    return false
+
+    const requiredStringFields = ['hostname', 'platform', 'release']
+    for (const field of requiredStringFields) {
+      if (!TestValidators.isNonEmptyString((info as any)[field])) {
+        return false
+      }
+    }
+
+    const optionalStringFields = ['version', 'arch']
+    for (const field of optionalStringFields) {
+      if (field in info && !TestValidators.isNonEmptyString((info as any)[field])) {
+        return false
+      }
+    }
+
+    const numericFields: Array<[string, boolean]> = [
+      ['uptime', true],
+      ['uptimeSeconds', false],
+      ['bootTime', false]
+    ]
+
+    for (const [field, required] of numericFields) {
+      if (field in info) {
+        if (!TestValidators.isValidNumber((info as any)[field]) || (info as any)[field] < 0) {
+          return false
+        }
+      } else if (required) {
+        return false
+      }
+    }
+
+    if ('loadAverage' in info) {
+      const load = (info as any).loadAverage
+      if (!TestValidators.isValidObject(load)) {
+        return false
+      }
+
+      const loads = [load.load1, load.load5, load.load15]
+
+      const platform = (info as any).platform
+      if (platform === 'darwin') {
+        if (!MacOSTestUtils.validateLoadAverage(loads)) {
+          return false
+        }
+      } else if (platform === 'win32') {
+        if (!WindowsTestUtils.validateLoadAverage(loads)) {
+          return false
+        }
+      } else {
+        if (!LinuxTestUtils.validateLoadAverage(loads)) {
+          return false
+        }
+      }
+    }
+
+    return true
   }
 
   /**

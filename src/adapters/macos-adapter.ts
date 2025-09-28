@@ -443,13 +443,19 @@ export class MacOSAdapter extends BasePlatformAdapter {
 
     // 解析 vm_stat 输出
     const vmLines = vmStat.split('\n');
-    const pageSize = 4096; // macOS 页面大小通常是 4KB
+    const pageSizeLine = vmLines.find(line => /page size of\s+\d+\s+bytes/i.test(line));
+    const pageSizeMatch = pageSizeLine ? pageSizeLine.match(/page size of\s+(\d+)\s+bytes/i) : null;
+    const detectedPageSize = pageSizeMatch && pageSizeMatch[1]
+      ? this.safeParseInt(pageSizeMatch[1])
+      : 0;
+    const pageSize = detectedPageSize > 0 ? detectedPageSize : 4096;
     let free = 0, active = 0, inactive = 0, wired = 0, compressed = 0;
 
     for (const line of vmLines) {
-      const match = line.match(/Pages\s+(\w+):\s+(\d+)/);
+      const match = line.match(/Pages\s+([\w\s]+):\s+(\d+)/);
       if (match) {
-        const [, type, count] = match;
+        const [, typeRaw, count] = match;
+        const type = typeRaw.trim().toLowerCase();
         const bytes = this.safeParseInt(count) * pageSize;
 
         switch (type) {
@@ -463,9 +469,12 @@ export class MacOSAdapter extends BasePlatformAdapter {
             inactive = bytes;
             break;
           case 'wired':
+          case 'wired down':
             wired = bytes;
             break;
+          case 'compressed':
           case 'occupied':
+          case 'occupied by compressor':
             compressed = bytes;
             break;
         }
@@ -539,28 +548,14 @@ export class MacOSAdapter extends BasePlatformAdapter {
    * 解析 iostat -d 输出为磁盘 I/O 统计
    */
   private parseDiskIO(output: string): any {
-    const lines = output.split('\n').filter(line => line.trim());
-    const devices: any[] = [];
-
-    // 跳过头部，查找设备行
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.includes('disk')) {
-        const fields = line.trim().split(/\s+/);
-        if (fields.length >= 3) {
-          const [device, kbPerTransfer, transfersPerSec, mbPerSec] = fields;
-
-          devices.push({
-            device,
-            kbPerTransfer: this.safeParseNumber(kbPerTransfer),
-            transfersPerSec: this.safeParseNumber(transfersPerSec),
-            mbPerSec: this.safeParseNumber(mbPerSec)
-          });
-        }
-      }
-    }
-
-    return devices;
+    return this.parseIostatDisks(output).map(item => ({
+      device: item.device,
+      kbPerTransfer: item.kbPerTransfer,
+      transfersPerSec: item.transfersPerSec,
+      mbPerSec: item.mbPerSec,
+      readSpeed: item.bytePerSec,
+      iops: item.transfersPerSec
+    }));
   }
 
   /**
@@ -582,6 +577,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
       const addresses: any[] = [];
       let state = 'down';
       let mtu = 0;
+      let macAddress = '';
 
       for (const line of lines) {
         // 状态检查
@@ -593,6 +589,12 @@ export class MacOSAdapter extends BasePlatformAdapter {
         const mtuMatch = line.match(/mtu (\d+)/);
         if (mtuMatch) {
           mtu = this.safeParseInt(mtuMatch[1]);
+        }
+
+        // MAC 地址
+        const etherMatch = line.match(/ether\s+([0-9a-f:]+)/i);
+        if (etherMatch) {
+          macAddress = etherMatch[1].toLowerCase();
         }
 
         // IPv4 地址
@@ -619,7 +621,8 @@ export class MacOSAdapter extends BasePlatformAdapter {
         addresses,
         state,
         mtu,
-        internal: name === 'lo0'
+        internal: name === 'lo0',
+        mac: macAddress
       });
     }
 
@@ -1000,23 +1003,19 @@ export class MacOSAdapter extends BasePlatformAdapter {
    * 解析 iostat -d 输出为磁盘统计
    */
   private parseDiskStats(output: string): any[] {
-    const lines = output.split('\n').slice(2); // 跳过标题行
-    const stats: any[] = [];
-
-    for (const line of lines) {
-      const fields = line.trim().split(/\s+/);
-      if (fields.length >= 6) {
-        stats.push({
-          device: fields[0],
-          reads: this.safeParseNumber(fields[1]),
-          writes: this.safeParseNumber(fields[2]),
-          readKB: this.safeParseNumber(fields[3]),
-          writeKB: this.safeParseNumber(fields[4])
-        });
-      }
-    }
-
-    return stats;
+    return this.parseIostatDisks(output).map(item => ({
+      device: item.device,
+      readBytes: item.bytePerSec,
+      writeBytes: 0,
+      readCount: item.transfersPerSec,
+      writeCount: 0,
+      readTime: 0,
+      writeTime: 0,
+      ioTime: 0,
+      readSpeed: item.bytePerSec,
+      writeSpeed: 0,
+      iops: item.transfersPerSec
+    }));
   }
 
   /**
@@ -1135,21 +1134,73 @@ export class MacOSAdapter extends BasePlatformAdapter {
    */
   private parseEnvironment(output: string): Record<string, string> {
     const env: Record<string, string> = {};
-    const lines = output.split('\n');
+    if (!output) {
+      return env;
+    }
 
-    for (const line of lines) {
-      const variables = line.split(/\s+/);
-      for (const variable of variables) {
-        const equalIndex = variable.indexOf('=');
-        if (equalIndex > 0 && !variable.startsWith('PID=')) {
-          const key = variable.substring(0, equalIndex);
-          const value = variable.substring(equalIndex + 1);
-          env[key] = value;
-        }
+    const pattern = /(^|\s)([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*?)(?=(\s+[A-Za-z_][A-Za-z0-9_]*=)|$)/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(output)) !== null) {
+      const key = match[2];
+      if (key === 'PID') {
+        continue;
       }
+
+      const value = match[3].replace(/\s+$/u, '');
+      env[key] = value;
     }
 
     return env;
+  }
+
+  private parseIostatDisks(output: string): Array<{
+    device: string;
+    kbPerTransfer: number;
+    transfersPerSec: number;
+    mbPerSec: number;
+    bytePerSec: number;
+  }> {
+    const lines = output.split('\n').map(line => line.trimEnd());
+    const deviceLineIndex = lines.findIndex(line => /disk\w+/i.test(line));
+    if (deviceLineIndex === -1) {
+      return [];
+    }
+
+    const deviceLine = lines[deviceLineIndex];
+    const deviceNames = (deviceLine.match(/disk[^\s]*/gi) || []).map(name => name.trim());
+    if (deviceNames.length === 0) {
+      return [];
+    }
+
+    const dataLines = lines.slice(deviceLineIndex + 1).filter(line => line && /[\d.]/.test(line));
+    if (dataLines.length === 0) {
+      return [];
+    }
+
+    const tokens = dataLines[0].trim().split(/\s+/);
+    const metricsPerDevice = 3;
+    const result: Array<{ device: string; kbPerTransfer: number; transfersPerSec: number; mbPerSec: number; bytePerSec: number; }> = [];
+
+    deviceNames.forEach((device, index) => {
+      const offset = index * metricsPerDevice;
+      if (tokens.length >= offset + metricsPerDevice) {
+        const kbPerTransfer = this.safeParseNumber(tokens[offset]);
+        const transfersPerSec = this.safeParseNumber(tokens[offset + 1]);
+        const mbPerSec = this.safeParseNumber(tokens[offset + 2]);
+        const bytePerSec = mbPerSec * 1024 * 1024;
+
+        result.push({
+          device,
+          kbPerTransfer,
+          transfersPerSec,
+          mbPerSec,
+          bytePerSec
+        });
+      }
+    });
+
+    return result;
   }
 
   /**
