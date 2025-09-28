@@ -361,7 +361,9 @@ export class WindowsAdapter extends BasePlatformAdapter {
 
   /** 获取系统信息 */
   async getSystemInfo(): Promise<any> {
-    const uptime = os.uptime();
+    const uptimeSeconds = os.uptime();
+    const uptimeMs = uptimeSeconds * 1000;
+    const bootTime = Date.now() - uptimeMs;
     const load = os.loadavg();
 
     let systemDetails: any = {};
@@ -381,7 +383,9 @@ export class WindowsAdapter extends BasePlatformAdapter {
       release: systemDetails.Version ? `${systemDetails.Version}${systemDetails.BuildNumber ? ' (Build ' + systemDetails.BuildNumber + ')' : ''}` : os.release(),
       kernel: typeof (os as any).version === 'function' ? (os as any).version() : os.release(),
       arch: os.arch(),
-      uptime,
+      uptime: uptimeMs,
+      uptimeSeconds,
+      bootTime,
       loadAverage: {
         load1: load[0],
         load5: load[1],
@@ -405,7 +409,12 @@ export class WindowsAdapter extends BasePlatformAdapter {
 
   /** 获取系统运行时间 */
   async getSystemUptime(): Promise<any> {
-    return { uptime: os.uptime() };
+    const uptimeSeconds = os.uptime();
+    return {
+      uptimeSeconds,
+      uptime: uptimeSeconds * 1000,
+      bootTime: Date.now() - uptimeSeconds * 1000
+    };
   }
 
   /** 获取系统用户 */

@@ -169,27 +169,34 @@ export class OSUtils {
     maxSize?: number;
     defaultTTL?: number;
   }) {
-    if (options.enabled !== undefined) {
-      options.enabled ? this.cache.enable() : this.cache.disable();
-    }
+    const { enabled, maxSize, defaultTTL } = options;
+    const needsResize = maxSize !== undefined || defaultTTL !== undefined;
 
-    if (options.maxSize !== undefined || options.defaultTTL !== undefined) {
-      // 重新创建缓存管理器
+    const previousEnabled = this.cache.isEnabled();
+    const targetEnabled = enabled !== undefined ? enabled : previousEnabled;
+
+    if (needsResize) {
       const currentStats = this.cache.getStats();
+      const currentTTL = this.cache.getDefaultTTL();
+      const nextMaxSize = maxSize ?? currentStats.maxSize;
+      const nextTTL = defaultTTL ?? currentTTL;
+
+      this.cache.destroy();
+      this.resetMonitors();
+
       this.cache = new CacheManager({
-        maxSize: options.maxSize || currentStats.maxSize,
-        defaultTTL: options.defaultTTL || this.config.cacheTTL || 5000,
-        enabled: this.cache.isEnabled()
+        maxSize: nextMaxSize,
+        defaultTTL: nextTTL,
+        enabled: targetEnabled
       });
 
-      // 重置监控器实例以使用新缓存
-      this._cpu = undefined;
-      this._memory = undefined;
-      this._disk = undefined;
-      this._network = undefined;
-      this._process = undefined;
-      this._system = undefined;
+      this.config.maxCacheSize = nextMaxSize;
+      this.config.cacheTTL = nextTTL;
+    } else if (enabled !== undefined) {
+      targetEnabled ? this.cache.enable() : this.cache.disable();
     }
+
+    this.config.cacheEnabled = targetEnabled;
 
     return this;
   }
@@ -292,7 +299,15 @@ export class OSUtils {
    * 销毁实例，清理资源
    */
   destroy() {
-    // 销毁所有监控器实例（清理它们的订阅和事件监听器）
+    this.resetMonitors();
+
+    // 销毁缓存管理器（清理定时器）
+    if (this.cache) {
+      this.cache.destroy();
+    }
+  }
+
+  private resetMonitors(): void {
     if (this._cpu) {
       this._cpu.destroy();
       this._cpu = undefined;
@@ -316,11 +331,6 @@ export class OSUtils {
     if (this._system) {
       this._system.destroy();
       this._system = undefined;
-    }
-
-    // 销毁缓存管理器（清理定时器）
-    if (this.cache) {
-      this.cache.destroy();
     }
   }
 }

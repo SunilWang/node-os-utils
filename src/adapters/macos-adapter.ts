@@ -1,3 +1,5 @@
+import os from 'os';
+
 import { BasePlatformAdapter } from '../core/platform-adapter';
 import { CommandExecutor } from '../utils/command-executor';
 import { CommandResult, SupportedFeatures } from '../types/platform';
@@ -222,9 +224,21 @@ export class MacOSAdapter extends BasePlatformAdapter {
    */
   async getProcessInfo(pid: number): Promise<any> {
     try {
-      const result = await this.executeCommand(`ps -p ${pid} -o pid,ppid,command,pcpu,pmem,state,user,lstart`);
-      this.validateCommandResult(result, `ps -p ${pid}`);
-      return this.parseProcessInfo(result.stdout, pid);
+      const [summaryResult, commandResult, startResult] = await Promise.all([
+        this.executeCommand(`ps -p ${pid} -o pid=,ppid=,rss=,pcpu=,pmem=,state=,user=`),
+        this.executeCommand(`ps -p ${pid} -o command=`),
+        this.executeCommand(`ps -p ${pid} -o lstart=`)
+      ]);
+
+      this.validateCommandResult(summaryResult, `ps summary ${pid}`);
+      this.validateCommandResult(commandResult, `ps command ${pid}`);
+      this.validateCommandResult(startResult, `ps lstart ${pid}`);
+
+      const summaryLine = summaryResult.stdout.split('\n').find(line => line.trim().length > 0) || '';
+      const commandLine = commandResult.stdout.split('\n').find(line => line.trim().length > 0) || '';
+      const lstartLine = startResult.stdout.split('\n').find(line => line.trim().length > 0) || '';
+
+      return this.parseProcessInfo({ summary: summaryLine, command: commandLine, start: lstartLine }, pid);
     } catch (error) {
       throw this.createCommandError('getProcessInfo', error);
     }
@@ -698,11 +712,15 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 解析 ps -p pid -o pid,ppid,command,pcpu,pmem,state,user,lstart 输出为特定进程信息
+   * 解析 ps 输出的进程详细信息
    */
-  private parseProcessInfo(output: string, pid: number): any {
-    const lines = output.split('\n').filter(line => line.trim());
-    if (lines.length < 2) {
+  private parseProcessInfo(
+    data: { summary: string; command: string; start: string },
+    pid: number
+  ): any {
+    const summaryParts = data.summary.trim().split(/\s+/);
+
+    if (summaryParts.length < 7) {
       throw new MonitorError(
         `Process ${pid} not found`,
         ErrorCode.NOT_AVAILABLE,
@@ -711,26 +729,22 @@ export class MacOSAdapter extends BasePlatformAdapter {
       );
     }
 
-    const dataLine = lines[1]; // 第一行是头部
-    const match = dataLine.match(/^\s*(\d+)\s+(\d+)\s+(.+?)\s+([\d.]+)\s+([\d.]+)\s+(\w+)\s+(\w+)\s+(.+)$/);
+    const [pidStr, ppidStr, rssStr, pcpu, pmem, state, user] = summaryParts;
+    const command = data.command.trim();
+    const lstart = data.start.trim();
 
-    if (match) {
-      const [, , ppid, command, pcpu, pmem, state, user, lstart] = match;
-
-      return {
-        pid,
-        ppid: this.safeParseInt(ppid),
-        name: command.split(' ')[0],
-        command: command.trim(),
-        cpuUsage: this.safeParseNumber(pcpu),
-        memoryUsage: this.safeParseNumber(pmem),
-        state,
-        user,
-        startTime: lstart.trim()
-      };
-    }
-
-    throw this.createParseError(output, 'Unable to parse process info');
+    return {
+      pid: this.safeParseInt(pidStr) || pid,
+      ppid: this.safeParseInt(ppidStr),
+      name: command.split(' ')[0] || command,
+      command,
+      cpuUsage: this.safeParseNumber(pcpu),
+      memoryUsage: this.safeParseInt(rssStr) * 1024,
+      memoryPercentage: this.safeParseNumber(pmem),
+      state,
+      user,
+      startTime: lstart
+    };
   }
 
   /**
@@ -739,17 +753,11 @@ export class MacOSAdapter extends BasePlatformAdapter {
   private parseSystemInfo(uname: string, uptime: string, loadavg: string, osVersion: string | null): any {
     const unameFields = uname.trim().split(' ');
 
-    // 解析 uptime 获取启动时间
-    const uptimeMatch = uptime.match(/up\s+(.+?),/);
-    const uptimeStr = uptimeMatch ? uptimeMatch[1] : '';
+    const uptimeSeconds = os.uptime();
+    const bootTime = Date.now() - uptimeSeconds * 1000;
 
-    // 解析负载平均值
-    const loadMatch = loadavg.match(/\{([\d.]+)\s+([\d.]+)\s+([\d.]+)\}/);
-    const load = loadMatch ? {
-      load1: this.safeParseNumber(loadMatch[1]),
-      load5: this.safeParseNumber(loadMatch[2]),
-      load15: this.safeParseNumber(loadMatch[3])
-    } : { load1: 0, load5: 0, load15: 0 };
+    const load = this.parseLoadAverage(loadavg);
+    const uptimeMs = uptimeSeconds * 1000;
 
     return {
       hostname: unameFields[1] || 'Unknown',
@@ -757,7 +765,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
       release: unameFields[2] || 'Unknown',
       version: osVersion ? osVersion.trim() : unameFields[3] || 'Unknown',
       arch: unameFields[4] || 'Unknown',
-      uptime: uptimeStr,
+      uptime: uptimeMs,
+      uptimeSeconds,
+      bootTime,
       loadAverage: load
     };
   }
@@ -924,12 +934,15 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取系统运行时间，解析 uptime 输出为系统运行时间
+   * 获取系统运行时间
    */
   async getSystemUptime(): Promise<any> {
     try {
-      const result = await this.executeCommand('uptime');
-      return this.parseSystemUptime(result.stdout);
+      const uptimeSeconds = os.uptime();
+      return {
+        uptime: uptimeSeconds,
+        bootTime: Date.now() - uptimeSeconds * 1000
+      };
     } catch (error) {
       throw this.createCommandError('getSystemUptime', error);
     }

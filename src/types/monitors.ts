@@ -665,6 +665,16 @@ export interface SystemInfo {
   uptime: number;
 
   /**
+   * 系统运行时间（秒）
+   */
+  uptimeSeconds?: number;
+
+  /**
+   * 最近一次启动时间戳（毫秒）
+   */
+  bootTime?: number;
+
+  /**
    * 系统负载
    */
   loadAverage: LoadAverage;

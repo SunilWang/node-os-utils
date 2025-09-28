@@ -484,9 +484,6 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
    * 转换系统信息
    */
   private transformSystemInfo(rawData: any): SystemInfo {
-    const currentTime = Date.now();
-    const uptime = this.safeParseNumber(rawData.uptime) * 1000; // 转换为毫秒
-
     return {
       hostname: rawData.hostname || rawData.name || 'unknown',
       platform: rawData.platform || rawData.type || 'unknown',
@@ -494,13 +491,90 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
       release: rawData.release || rawData.version || 'unknown',
       kernel: rawData.kernel || rawData.kernelVersion || 'unknown',
       arch: rawData.arch || rawData.architecture || 'unknown',
-      uptime,
+      uptime: this.normalizeUptime(rawData),
+      uptimeSeconds: this.extractUptimeSeconds(rawData),
+      bootTime: this.normalizeBootTime(rawData),
       loadAverage: this.transformLoadAverage(rawData.loadAverage || rawData.load || {}),
       userCount: rawData.userCount || rawData.users,
       processCount: rawData.processCount || rawData.processes,
-      time: currentTime,
+      time: Date.now(),
       timezone: rawData.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
     };
+  }
+
+  private normalizeUptime(rawData: any): number {
+    const now = Date.now();
+
+    if (typeof rawData?.uptimeMs === 'number') {
+      return Math.max(0, rawData.uptimeMs);
+    }
+
+    if (typeof rawData?.uptimeMilliseconds === 'number') {
+      return Math.max(0, rawData.uptimeMilliseconds);
+    }
+
+    if (typeof rawData?.uptimeSeconds === 'number') {
+      return Math.max(0, rawData.uptimeSeconds * 1000);
+    }
+
+    if (typeof rawData?.uptime === 'number') {
+      if (typeof rawData?.bootTime === 'number') {
+        return Math.max(0, now - rawData.bootTime);
+      }
+      return Math.max(0, rawData.uptime);
+    }
+
+    if (typeof rawData?.bootTime === 'number') {
+      return Math.max(0, now - rawData.bootTime);
+    }
+
+    if (typeof rawData?.uptime === 'string') {
+      const parsed = parseFloat(rawData.uptime);
+      if (!Number.isNaN(parsed)) {
+        return Math.max(0, parsed * 1000);
+      }
+    }
+
+    return 0;
+  }
+
+  private extractUptimeSeconds(rawData: any): number | undefined {
+    // 优先读取统一的秒级字段，避免重复转换
+    if (typeof rawData?.uptimeSeconds === 'number') {
+      return Math.max(0, rawData.uptimeSeconds);
+    }
+
+    if (typeof rawData?.uptime === 'number' && rawData.uptime < 1e6) {
+      return Math.max(0, rawData.uptime);
+    }
+
+    if (typeof rawData?.uptime === 'number' && typeof rawData?.bootTime === 'number') {
+      return Math.max(0, (Date.now() - rawData.bootTime) / 1000);
+    }
+
+    if (typeof rawData?.bootTime === 'number') {
+      return Math.max(0, (Date.now() - rawData.bootTime) / 1000);
+    }
+
+    return undefined;
+  }
+
+  private normalizeBootTime(rawData: any): number | undefined {
+    // 保持 bootTime 的可追溯性，缺失时退化为当前时间推算
+    if (typeof rawData?.bootTime === 'number') {
+      return rawData.bootTime;
+    }
+
+    if (typeof rawData?.uptimeSeconds === 'number') {
+      return Date.now() - rawData.uptimeSeconds * 1000;
+    }
+
+    if (typeof rawData?.uptime === 'number') {
+      const uptime = rawData.uptime < 1e6 ? rawData.uptime * 1000 : rawData.uptime;
+      return Date.now() - uptime;
+    }
+
+    return undefined;
   }
 
   /**
@@ -549,11 +623,35 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     }
 
     return rawData.map(service => ({
-      name: service.name || service.service || 'unknown',
-      status: this.normalizeServiceStatus(service.status || service.state),
-      enabled: service.enabled !== false,
-      description: service.description || service.desc
+      name: service.name
+        || service.service
+        || service.unit
+        || service.label
+        || 'unknown',
+      status: this.normalizeServiceStatus(
+        service.status ?? service.state ?? service.active ?? service.sub,
+        service
+      ),
+      enabled: this.isServiceEnabled(service),
+      description: service.description || service.desc || service.DisplayName
     }));
+  }
+
+  private isServiceEnabled(service: any): boolean {
+    if (service?.enabled !== undefined) {
+      return Boolean(service.enabled);
+    }
+
+    const loadState = typeof service?.load === 'string' ? service.load.toLowerCase() : '';
+    if (loadState.includes('masked') || loadState.includes('disabled') || loadState.includes('not-found')) {
+      return false;
+    }
+
+    if (service?.StartType) {
+      return String(service.StartType).toLowerCase() !== 'disabled';
+    }
+
+    return true;
   }
 
   /**
@@ -634,21 +732,39 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
   /**
    * 规范化服务状态
    */
-  private normalizeServiceStatus(status: string): 'running' | 'stopped' | 'failed' | 'unknown' {
-    if (!status || typeof status !== 'string') {
-      return 'unknown';
+  private normalizeServiceStatus(
+    status: any,
+    service?: any
+  ): 'running' | 'stopped' | 'failed' | 'unknown' {
+    if (typeof status === 'number') {
+      if (status === 0) return 'running';
+      if (status > 0) return 'failed';
     }
 
-    const normalizedStatus = status.toLowerCase().trim();
+    if (typeof status === 'string') {
+      const normalizedStatus = status.toLowerCase().trim();
 
-    if (normalizedStatus.includes('running') || normalizedStatus.includes('active') || normalizedStatus === 'start') {
+      if (normalizedStatus === '-' && typeof service?.pid === 'number') {
+        return service.pid > 0 ? 'running' : 'stopped';
+      }
+
+      if (!Number.isNaN(Number(normalizedStatus))) {
+        return this.normalizeServiceStatus(Number(normalizedStatus), service);
+      }
+
+      if (/(running|active|online|up)/.test(normalizedStatus)) {
+        return 'running';
+      }
+      if (/(stopped|inactive|down|stop|exit|exited|not running)/.test(normalizedStatus)) {
+        return 'stopped';
+      }
+      if (/(failed|error|dead|crashed)/.test(normalizedStatus)) {
+        return 'failed';
+      }
+    }
+
+    if (typeof service?.pid === 'number' && service.pid > 0) {
       return 'running';
-    }
-    if (normalizedStatus.includes('stopped') || normalizedStatus.includes('inactive') || normalizedStatus === 'stop') {
-      return 'stopped';
-    }
-    if (normalizedStatus.includes('failed') || normalizedStatus.includes('error')) {
-      return 'failed';
     }
 
     return 'unknown';

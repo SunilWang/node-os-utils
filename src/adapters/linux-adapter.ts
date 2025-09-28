@@ -1,9 +1,28 @@
+import os from 'os';
 import { promises as fs } from 'fs';
 import { BasePlatformAdapter } from '../core/platform-adapter';
 import { CommandExecutor } from '../utils/command-executor';
 import { CommandResult, SupportedFeatures } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
 import { MonitorError, ErrorCode } from '../types/errors';
+
+interface CpuTimes {
+  user: number;
+  nice: number;
+  system: number;
+  idle: number;
+  iowait: number;
+  irq: number;
+  softirq: number;
+  steal: number;
+  guest: number;
+  guestNice: number;
+}
+
+interface CpuStatSnapshot {
+  summary: CpuTimes;
+  cores: CpuTimes[];
+}
 
 /**
  * Linux 平台适配器
@@ -13,6 +32,7 @@ import { MonitorError, ErrorCode } from '../types/errors';
 export class LinuxAdapter extends BasePlatformAdapter {
   private executor: CommandExecutor;
   private readonly processListCommand = 'ps -eo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args=';
+  private readonly cpuUsageSamplingInterval = 200;
 
   // Linux 系统路径常量
   private readonly paths = {
@@ -102,8 +122,10 @@ export class LinuxAdapter extends BasePlatformAdapter {
    */
   async getCPUUsage(): Promise<any> {
     try {
-      const statContent = await this.readFile(this.paths.stat);
-      return this.parseCPUUsage(statContent);
+      const firstSnapshot = await this.captureCpuStat();
+      await this.delay(this.cpuUsageSamplingInterval);
+      const secondSnapshot = await this.captureCpuStat();
+      return this.calculateCpuUsage(firstSnapshot, secondSnapshot);
     } catch (error) {
       throw this.createCommandError('getCPUUsage', error);
     }
@@ -267,7 +289,9 @@ export class LinuxAdapter extends BasePlatformAdapter {
         results[2].status === 'fulfilled' ? results[2].value : ''
       ]);
 
-      return this.parseProcessInfo(pid, stat, status, cmdline);
+      const statContent = stat || await this.readFile(`${procPath}/stat`).catch(() => '');
+
+      return this.parseProcessInfo(pid, statContent, status, cmdline);
     } catch (error) {
       throw this.createCommandError('getProcessInfo', error);
     }
@@ -411,29 +435,141 @@ export class LinuxAdapter extends BasePlatformAdapter {
     };
   }
 
-  private parseCPUUsage(content: string): any {
-    const lines = content.split('\n');
-    const cpuLine = lines.find(line => line.startsWith('cpu '));
+  private async captureCpuStat(): Promise<CpuStatSnapshot> {
+    const content = await this.readFile(this.paths.stat);
+    return this.parseCpuStat(content);
+  }
 
-    if (!cpuLine) {
+  private parseCpuStat(content: string): CpuStatSnapshot {
+    const lines = content
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
+
+    const summaryLine = lines.find(line => line.startsWith('cpu '));
+    if (!summaryLine) {
       throw this.createParseError(content, 'CPU usage line not found');
     }
 
-    const values = cpuLine.split(/\s+/).slice(1).map(v => this.safeParseInt(v));
-    const [user, nice, system, idle, iowait, irq, softirq] = values;
+    const summary = this.parseCpuTimesFromLine(summaryLine);
+    const cores: CpuTimes[] = [];
 
-    const total = user + nice + system + idle + iowait + irq + softirq;
-    const usage = total > 0 ? ((total - idle) / total) * 100 : 0;
+    for (const line of lines) {
+      if (line.startsWith('cpu') && !line.startsWith('cpu ')) {
+        cores.push(this.parseCpuTimesFromLine(line));
+      }
+    }
 
     return {
-      overall: usage,
-      user: total > 0 ? (user / total) * 100 : 0,
-      system: total > 0 ? (system / total) * 100 : 0,
-      idle: total > 0 ? (idle / total) * 100 : 0,
-      iowait: total > 0 ? (iowait / total) * 100 : 0,
-      irq: total > 0 ? (irq / total) * 100 : 0,
-      softirq: total > 0 ? (softirq / total) * 100 : 0
+      summary,
+      cores
     };
+  }
+
+  private parseCpuTimesFromLine(line: string): CpuTimes {
+    const parts = line.trim().split(/\s+/);
+    parts.shift(); // 移除 cpu 标识
+
+    const values = parts.map(value => this.safeParseInt(value));
+
+    return {
+      user: values[0] ?? 0,
+      nice: values[1] ?? 0,
+      system: values[2] ?? 0,
+      idle: values[3] ?? 0,
+      iowait: values[4] ?? 0,
+      irq: values[5] ?? 0,
+      softirq: values[6] ?? 0,
+      steal: values[7] ?? 0,
+      guest: values[8] ?? 0,
+      guestNice: values[9] ?? 0
+    };
+  }
+
+  private calculateCpuUsage(previous: CpuStatSnapshot, current: CpuStatSnapshot): any {
+    const summaryDelta = this.diffCpuTimes(previous.summary, current.summary);
+    const percentages = this.computeUsagePercentages(summaryDelta);
+    const cores = this.calculateCoreUsage(previous.cores, current.cores);
+
+    return {
+      overall: percentages.overall,
+      user: percentages.user,
+      system: percentages.system,
+      idle: percentages.idle,
+      iowait: percentages.iowait,
+      irq: percentages.irq,
+      softirq: percentages.softirq,
+      cores
+    };
+  }
+
+  private calculateCoreUsage(previousCores: CpuTimes[], currentCores: CpuTimes[]): number[] {
+    const coreCount = Math.min(previousCores.length, currentCores.length);
+    const usages: number[] = [];
+
+    for (let i = 0; i < coreCount; i++) {
+      const delta = this.diffCpuTimes(previousCores[i], currentCores[i]);
+      const total = this.getCpuTotal(delta);
+      if (total <= 0) {
+        usages.push(0);
+        continue;
+      }
+
+      const busy = total - delta.idle;
+      usages.push((busy / total) * 100);
+    }
+
+    return usages;
+  }
+
+  private diffCpuTimes(previous: CpuTimes, current: CpuTimes): CpuTimes {
+    return {
+      user: this.safeDiff(current.user, previous.user),
+      nice: this.safeDiff(current.nice, previous.nice),
+      system: this.safeDiff(current.system, previous.system),
+      idle: this.safeDiff(current.idle, previous.idle),
+      iowait: this.safeDiff(current.iowait, previous.iowait),
+      irq: this.safeDiff(current.irq, previous.irq),
+      softirq: this.safeDiff(current.softirq, previous.softirq),
+      steal: this.safeDiff(current.steal, previous.steal),
+      guest: this.safeDiff(current.guest, previous.guest),
+      guestNice: this.safeDiff(current.guestNice, previous.guestNice)
+    };
+  }
+
+  private computeUsagePercentages(delta: CpuTimes) {
+    const total = this.getCpuTotal(delta);
+
+    if (total <= 0) {
+      return {
+        overall: 0,
+        user: 0,
+        system: 0,
+        idle: 0,
+        iowait: 0,
+        irq: 0,
+        softirq: 0
+      };
+    }
+
+    return {
+      overall: ((total - delta.idle) / total) * 100,
+      user: ((delta.user + delta.nice) / total) * 100,
+      system: (delta.system / total) * 100,
+      idle: (delta.idle / total) * 100,
+      iowait: (delta.iowait / total) * 100,
+      irq: (delta.irq / total) * 100,
+      softirq: (delta.softirq / total) * 100
+    };
+  }
+
+  private getCpuTotal(times: CpuTimes): number {
+    return times.user + times.nice + times.system + times.idle + times.iowait + times.irq + times.softirq + times.steal + times.guest + times.guestNice;
+  }
+
+  private safeDiff(current: number, previous: number): number {
+    const diff = current - previous;
+    return diff > 0 ? diff : 0;
   }
 
   private parseMemoryInfo(content: string): any {
@@ -489,49 +625,87 @@ export class LinuxAdapter extends BasePlatformAdapter {
 
 
   /**
-   * 解析 ip/ifconfig 输出的网卡信息
-   * 会去除行首缩进以兼容 " ip addr" 的缩进格式
+   * 解析 ip/ifconfig 输出的网卡信息，稳定提取接口名称
    */
   private parseNetworkInterfaces(output: string): any {
     const interfaces: any[] = [];
-    const blocks = output.split(/^\d+:/m);
+    const lines = output.split('\n');
+    let current: {
+      name: string;
+      addresses: any[];
+      state: string;
+      mtu: number;
+      internal: boolean;
+      loopbackDetected: boolean;
+    } | null = null;
 
-    for (const block of blocks) {
-      if (!block.trim()) continue;
+    const pushCurrent = () => {
+      if (current) {
+        interfaces.push({
+          name: current.name,
+          addresses: current.addresses,
+          state: current.state,
+          mtu: current.mtu,
+          internal: current.internal || current.loopbackDetected
+        });
+      }
+      current = null;
+    };
 
-      const lines = block.split('\n');
-      const header = lines[0]?.trim() || '';
-      const interfaceMatch = header.match(/^(\w+):/);
-      if (!interfaceMatch) continue;
+    for (const rawLine of lines) {
+      const headerMatch = rawLine.match(/^\s*(\d+):\s*([^:@]+)(?:@[^:]+)?:\s*(.*)$/);
+      if (headerMatch) {
+        pushCurrent();
 
-      const name = interfaceMatch[1];
-      const addresses: any[] = [];
+        const name = headerMatch[2];
+        const rest = headerMatch[3] || '';
+        const stateMatch = rest.match(/\bstate\s+([A-Z]+)/i);
+        const mtuMatch = rest.match(/\bmtu\s+(\d+)/i);
+        const isLoopback = /\bLOOPBACK\b/i.test(rest);
 
-      for (const line of lines) {
-        const inetMatch = line.match(/inet\s+([^\s]+)/);
-        if (inetMatch) {
-          addresses.push({
-            address: inetMatch[1].split('/')[0],
-            family: 'IPv4'
-          });
-        }
-
-        const inet6Match = line.match(/inet6\s+([^\s]+)/);
-        if (inet6Match) {
-          addresses.push({
-            address: inet6Match[1].split('/')[0],
-            family: 'IPv6'
-          });
-        }
+        current = {
+          name,
+          addresses: [],
+          state: stateMatch ? stateMatch[1].toLowerCase() : 'down',
+          mtu: mtuMatch ? this.safeParseInt(mtuMatch[1]) : 0,
+          internal: name === 'lo' || name === 'lo0',
+          loopbackDetected: isLoopback
+        };
+        continue;
       }
 
-      interfaces.push({
-        name,
-        addresses,
-        state: block.includes('state UP') ? 'up' : 'down'
-      });
+      if (!current) {
+        continue;
+      }
+
+      const line = rawLine.trim();
+      if (!line) {
+        continue;
+      }
+
+      if (/loopback/i.test(line)) {
+        current.loopbackDetected = true;
+      }
+
+      const inetMatch = line.match(/^inet\s+([^\s/]+)(?:\/\d+)?/);
+      if (inetMatch) {
+        current.addresses.push({
+          address: inetMatch[1],
+          family: 'IPv4'
+        });
+        continue;
+      }
+
+      const inet6Match = line.match(/^inet6\s+([^\s/]+)(?:\/\d+)?/);
+      if (inet6Match) {
+        current.addresses.push({
+          address: inet6Match[1],
+          family: 'IPv6'
+        });
+      }
     }
 
+    pushCurrent();
     return interfaces;
   }
 
@@ -641,6 +815,38 @@ export class LinuxAdapter extends BasePlatformAdapter {
   private parseProcessInfo(pid: number, stat: string, status: string, cmdline: string): any {
     const statusInfo = this.parseKeyValueOutput(status, '\t');
     const statFields = stat.split(' ');
+    const startTimeTicks = this.safeParseInt(statFields[21]);
+    const sysconf = (os as any).constants?.sysconf;
+    const hertz = typeof sysconf?.SC_CLK_TCK === 'number' && sysconf.SC_CLK_TCK > 0
+      ? sysconf.SC_CLK_TCK
+      : 100;
+
+    let uptimeMs = 0;
+    try {
+      uptimeMs = os.uptime() * 1000;
+    } catch {
+      uptimeMs = 0;
+    }
+
+    const bootTimeMs = uptimeMs > 0 ? Date.now() - uptimeMs : Date.now();
+    // 通过时钟节拍 + 开机时间估算进程启动时间，兼容无法访问 uptime 的环境
+    const computedStartTime = startTimeTicks > 0
+      ? bootTimeMs + (startTimeTicks / hertz) * 1000
+      : bootTimeMs;
+    const startTime = Math.min(computedStartTime, Date.now());
+    const rssPages = this.safeParseInt(statFields[23]);
+    const pageSize = typeof sysconf?.SC_PAGESIZE === 'number' && sysconf.SC_PAGESIZE > 0
+      ? sysconf.SC_PAGESIZE
+      : 4096;
+    const rssBytesFromStat = rssPages > 0 ? rssPages * pageSize : 0;
+
+    const vmRssRaw = statusInfo['VmRSS'] ?? statusInfo['VmRSS:'] ?? '0';
+    const vmSizeRaw = statusInfo['VmSize'] ?? statusInfo['VmSize:'] ?? '0';
+    const threadsRaw = statusInfo['Threads'] ?? statusInfo['Threads:'];
+
+    // 优先使用 /proc/[pid]/status 中的 KiB 数值，缺失时回退到 stat 的页数
+    const rssFromStatus = this.convertToBytes(vmRssRaw, 'kB');
+    const memoryUsage = rssFromStatus > 0 ? rssFromStatus : rssBytesFromStat;
 
     return {
       pid,
@@ -648,9 +854,13 @@ export class LinuxAdapter extends BasePlatformAdapter {
       command: cmdline.replace(/\0/g, ' ').trim(),
       state: statFields[2] || 'Unknown',
       ppid: this.safeParseInt(statFields[3]),
-      threads: this.safeParseInt(statusInfo['Threads']),
-      vmSize: this.convertToBytes(statusInfo['VmSize'] || '0', 'kB'),
-      vmRSS: this.convertToBytes(statusInfo['VmRSS'] || '0', 'kB')
+      threads: this.safeParseInt(threadsRaw),
+      vmSize: this.convertToBytes(vmSizeRaw, 'kB'),
+      vmRSS: memoryUsage,
+      memoryUsage,
+      memory: memoryUsage,
+      rss: memoryUsage,
+      startTime
     };
   }
 
@@ -659,13 +869,19 @@ export class LinuxAdapter extends BasePlatformAdapter {
     const uptimeFields = uptime.trim().split(' ');
     const loadFields = loadavg.trim().split(' ');
 
+    const uptimeSeconds = this.safeParseNumber(uptimeFields[0]);
+    const uptimeMs = uptimeSeconds * 1000;
+    const bootTime = Date.now() - uptimeMs;
+
     return {
       hostname: unameFields[1] || 'Unknown',
       platform: 'linux', // 统一返回标准平台名称，与 os.platform() 保持一致
       release: unameFields[2] || 'Unknown',
       version: version.trim(),
       arch: unameFields[4] || 'Unknown',
-      uptime: this.safeParseNumber(uptimeFields[0]) * 1000, // 转换为毫秒
+      uptime: uptimeMs,
+      uptimeSeconds,
+      bootTime,
       loadAverage: {
         load1: this.safeParseNumber(loadFields[0]),
         load5: this.safeParseNumber(loadFields[1]),
@@ -1047,5 +1263,13 @@ export class LinuxAdapter extends BasePlatformAdapter {
     }
 
     return services;
+  }
+
+  private async delay(ms: number): Promise<void> {
+    if (ms <= 0) {
+      return;
+    }
+
+    await new Promise<void>(resolve => setTimeout(resolve, ms));
   }
 }

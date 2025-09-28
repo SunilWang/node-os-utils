@@ -454,7 +454,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     /**
      * 收集单个网卡的信息并写入结果数组
      */
-    const addInterface = (name: string, addresses: any[]): void => {
+    const addInterface = (name: string, addresses: any[], raw?: any): void => {
       if (!Array.isArray(addresses) || addresses.length === 0) {
         return;
       }
@@ -468,14 +468,15 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
       }));
 
       const firstAddr = addresses[0];
+      const rawState = raw?.state ?? raw?.operstate ?? raw?.status;
       const networkInterface: NetworkInterface = {
         name,
         addresses: transformedAddresses,
         mac: firstAddr?.mac || '',
-        state: this.inferInterfaceState(firstAddr),
+        state: this.normalizeInterfaceState(rawState, firstAddr),
         type: this.inferInterfaceType(name),
         mtu: firstAddr?.mtu || 1500,
-        internal: firstAddr?.internal || false,
+        internal: Boolean(raw?.internal ?? firstAddr?.internal ?? false),
         speed: firstAddr?.speed,
         duplex: firstAddr?.duplex
       };
@@ -505,7 +506,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
               scopeid: item.scopeid
             }];
 
-        addInterface(name, addresses as any[]);
+        addInterface(name, addresses as any[], item);
       }
 
       return interfaces;
@@ -513,7 +514,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
 
     if (typeof rawData === 'object') {
       for (const [name, addresses] of Object.entries(rawData)) {
-        addInterface(name, addresses as any[]);
+        addInterface(name, addresses as any[], (rawData as any)[name]);
       }
     }
 
@@ -675,6 +676,23 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     }
 
     return true;
+  }
+
+  private normalizeInterfaceState(rawState: any, addr: any): 'up' | 'down' | 'unknown' {
+    // 直接复用适配器给出的状态，若不存在则回退到地址推断以保留兼容性
+    if (typeof rawState === 'string') {
+      const normalized = rawState.toLowerCase();
+
+      if (/(up|running|active|online)/.test(normalized)) {
+        return 'up';
+      }
+
+      if (/(down|inactive|disabled|offline)/.test(normalized)) {
+        return 'down';
+      }
+    }
+
+    return this.inferInterfaceState(addr);
   }
 
   /**

@@ -21,6 +21,7 @@
 - **🛡️ Robust Error Handling**: Consistent error handling with detailed error codes
 - **🔄 Event-Driven**: Real-time monitoring with subscription management
 - **📊 Rich Data Types**: Comprehensive data structures with unit conversions
+- **📆 Timeline Aware**: System info now exposes `bootTime` & `uptimeSeconds`, and Linux process metrics include precise `startTime`
 
 ### 🌟 Key Features
 - **🌍 Cross-Platform**: Linux, macOS, Windows support with intelligent platform adaptation
@@ -29,6 +30,7 @@
 - **🎯 Type Safe**: Full TypeScript definitions with IntelliSense support
 - **🔍 Comprehensive**: CPU, Memory, Disk, Network, Process, and System monitoring
 - **📈 Real-time**: Event-driven monitoring with customizable intervals
+- **✅ Accurate State Reporting**: Network adapters preserve native interface status while falling back to inferred states when unavailable
 
 ### 🧱 Architecture at a Glance
 - **AdapterFactory** centralises platform detection, caching instantiated adapters and exposing helper utilities such as `getSupportedPlatforms()` and `checkPlatformCapabilities()`.
