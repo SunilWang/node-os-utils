@@ -51,7 +51,7 @@
 | System services | ⚠️ `systemctl` when available | ❌ | ✅ |
 | Container awareness | ⚠️ Detects containers, gracefully degrades | ⚠️ Detects containers, limited | ⚠️ Detects containers, limited |
 
-> **Legend**: ✅ 全量支持 · ⚠️ 部分或受限 · ❌ 暂不支持
+> **Legend**: ✅ Fully supported · ⚠️ Partially limited · ❌ Not supported
 
 ### 🔍 Capability Diagnostics
 
