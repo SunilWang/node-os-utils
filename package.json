@@ -4,6 +4,13 @@
   "description": "Advanced cross-platform operating system monitoring utilities with TypeScript support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "files": [
     "dist/**/*",
     "README.md",
@@ -14,7 +21,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "clean": "rm -rf dist",
+    "clean": "rimraf dist",
     "build": "npm run clean && tsc",
     "build:watch": "tsc --watch",
     "dev": "tsc --watch",
@@ -25,8 +32,8 @@
     "test:linux": "npm run build && mocha 'dist/test/platform/linux.test.js'",
     "test:macos": "npm run build && mocha 'dist/test/platform/macos.test.js'",
     "test:windows": "npm run build && mocha 'dist/test/platform/windows.test.js'",
-    "test:current-platform": "npm run build && node -e \"const os = require('os'); const platform = os.platform(); const script = platform === 'linux' ? 'test:linux' : platform === 'darwin' ? 'test:macos' : platform === 'win32' ? 'test:windows' : 'test'; console.log('Running tests for platform:', platform); require('child_process').execSync('npm run ' + script.replace('test:', 'test:'), {stdio: 'inherit'});\"",
-    "test:all-platforms": "npm run test:linux; npm run test:macos; npm run test:windows",
+    "test:current-platform": "npm run build && node -e \"const os=require('os'); const platform=os.platform(); const map={linux:'test:linux',darwin:'test:macos',win32:'test:windows'}; const script=map[platform] || 'test'; console.log('Running tests for platform:', platform, '->', script); require('child_process').execSync('npm run ' + script, {stdio:'inherit'});\"",
+    "test:all-platforms": "npm run test:linux && npm run test:macos && npm run test:windows",
     "test:coverage": "nyc npm test",
     "test:coverage-platform": "nyc npm run test:platform",
     "test:node18": "node --version && npm test",
@@ -75,18 +82,18 @@
     "processes"
   ],
   "devDependencies": {
-    "typescript": "^5.4.0",
-    "@types/node": "^18.0.0",
-    "@types/mocha": "^10.0.0",
-    "@types/chai": "^4.3.0",
-    "mocha": "^10.0.0",
-    "chai": "^4.3.0",
-    "nyc": "^15.1.0",
-    "eslint": "^8.0.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0",
-    "typedoc": "^0.25.0",
-    "rimraf": "^5.0.0"
+    "typescript": "~5.4.0",
+    "@types/node": "~18.0.0",
+    "@types/mocha": "~10.0.0",
+    "@types/chai": "~4.3.0",
+    "mocha": "~10.0.0",
+    "chai": "~4.3.0",
+    "nyc": "~15.1.0",
+    "eslint": "~8.0.0",
+    "@typescript-eslint/eslint-plugin": "~6.0.0",
+    "@typescript-eslint/parser": "~6.0.0",
+    "typedoc": "~0.25.0",
+    "rimraf": "~5.0.0"
   },
   "dependencies": {}
 }
