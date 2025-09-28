@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 
 import { LinuxAdapter } from '../../../src/adapters/linux-adapter';
-import { MonitorError } from '../../../src/types/errors';
+import { MonitorError, ErrorCode } from '../../../src/types/errors';
 import os from 'os';
 
 describe('LinuxAdapter 内部解析逻辑', () => {
@@ -150,9 +150,73 @@ describe('LinuxAdapter 内部解析逻辑', () => {
     } catch (error: any) {
       expect(error).to.be.instanceOf(MonitorError);
       expect(error.details.primary.details.reason).to.equal('ip missing');
-      expect(error.details.fallback.details.reason).to.equal('ifconfig missing');
+    expect(error.details.fallback.details.reason).to.equal('ifconfig missing');
     }
 
     expect(callCount).to.equal(2);
+  });
+
+  it('容器环境应禁用系统服务能力', async () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+
+    internal.containerMode = true;
+    internal.supportedFeatures.system.services = false;
+    internal.executeCommand = async () => {
+      throw new Error('systemctl should not be called in container mode');
+    };
+
+    expect(adapter.getSupportedFeatures().system.services).to.be.false;
+
+    try {
+      await adapter.getSystemServices();
+      expect.fail('should throw MonitorError');
+    } catch (error: any) {
+      expect(error).to.be.instanceOf(MonitorError);
+      expect(error.code).to.equal(ErrorCode.PLATFORM_NOT_SUPPORTED);
+    }
+  });
+
+  it('应在 ss 不可用时回退到 netstat 解析连接', async () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+    const commands: string[] = [];
+
+    internal.executeCommand = async (command: string) => {
+      commands.push(command);
+
+      if (command === 'ss -tuln') {
+        throw MonitorError.createCommandFailed('linux', command, { reason: 'missing ss' });
+      }
+
+      if (command === 'netstat -tuln') {
+        return {
+          stdout: 'Proto Recv-Q Send-Q Local Address           Foreign Address         State\n' +
+            'tcp   0      0 0.0.0.0:22              0.0.0.0:*               LISTEN\n',
+          stderr: '',
+          exitCode: 0,
+          platform: 'linux',
+          executionTime: 1,
+          command
+        };
+      }
+
+      return {
+        stdout: '',
+        stderr: 'unsupported',
+        exitCode: 1,
+        platform: 'linux',
+        executionTime: 0,
+        command
+      };
+    };
+
+    const results = await adapter.getNetworkConnections();
+    expect(results).to.have.lengthOf(1);
+    expect(results[0].protocol).to.equal('tcp');
+    expect(results[0].state).to.equal('listen');
+    expect(results[0].localAddress).to.equal('0.0.0.0:22');
+    expect(results[0].foreignAddress).to.equal('0.0.0.0:*');
+    expect(commands).to.deep.equal(['ss -tuln', 'netstat -tuln']);
   });
 });

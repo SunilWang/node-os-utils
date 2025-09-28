@@ -49,6 +49,7 @@
 | 网络统计 | ✅（`/proc/net/dev`） | ✅（`netstat -ib`） | ⚠️ PowerShell 需管理员 |
 | 进程详情 | ✅ | ✅ | ✅（WMI） |
 | 系统服务 | ⚠️ 依赖 `systemctl` | ❌ | ✅ |
+| 容器兼容 | ⚠️ 自动检测并降级 | ⚠️ 自动检测并降级 | ⚠️ 自动检测并降级 |
 
 > **图例**：✅ 完全支持 · ⚠️ 部分或受限 · ❌ 暂不支持
 
@@ -73,6 +74,12 @@ if (!report.supported) {
 ```
 
 需要进一步排查时，还可以调用 `AdapterFactory.getDebugInfo()` 查看适配器特性与系统命令可用性。
+
+在 **容器环境** 中库会自动：
+- 通过 `/.dockerenv`、`/proc/1/cgroup` 或环境变量识别 Docker/Podman/Kubernetes；
+- 检测到容器后禁用 `systemctl` 服务枚举，避免非 systemd 环境下报错；
+- 当 `ss` 缺失时回退到 `netstat`，`ip` 缺失时回退到 `ifconfig`；
+- 在返回的 `MonitorError` 中携带详细的主备命令错误，便于区分权限问题与真正的不支持。
 
 ## 🚀 安装
 

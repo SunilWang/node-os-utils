@@ -43,12 +43,13 @@
 | Capability | Linux | macOS | Windows |
 |------------|:-----:|:-----:|:-------:|
 | CPU usage / info | ✅ | ✅ | ✅ |
-| CPU temperature | ⚠️ 需要 `/sys/class/thermal` | ⚠️ 需要 `powermetrics` (sudo) | ❌ （未开放 API） |
-| Memory pressure | ⚠️ 受限 | ✅ | ⚠️ 通过 WMI 估算 |
+| CPU temperature | ⚠️ Needs `/sys/class/thermal` | ⚠️ Requires `powermetrics` (sudo) | ❌ (no public API) |
+| Memory pressure | ⚠️ Partially available | ✅ | ⚠️ Estimated via WMI |
 | Disk IO stats | ✅ | ✅ | ❌ |
-| Network stats | ✅ (`/proc/net/dev`) | ✅ (`netstat -ib`) | ⚠️ PowerShell 需管理员权限 |
+| Network stats | ✅ (`/proc/net/dev`) | ✅ (`netstat -ib`) | ⚠️ Admin rights for PowerShell |
 | Process details | ✅ | ✅ | ✅ (WMI) |
-| System services | ⚠️ `systemctl` 可选 | ❌ | ✅ |
+| System services | ⚠️ `systemctl` when available | ❌ | ✅ |
+| Container awareness | ⚠️ Detects containers, gracefully degrades | ⚠️ Detects containers, limited | ⚠️ Detects containers, limited |
 
 > **Legend**: ✅ 全量支持 · ⚠️ 部分或受限 · ❌ 暂不支持
 
@@ -73,6 +74,13 @@ if (!report.supported) {
 ```
 
 `AdapterFactory.getDebugInfo()` is also available when you need to inspect feature flags or confirm that platform-specific commands can be executed.
+
+When running inside **containers**, the library automatically:
+- detects Docker/Podman/Kubernetes via `.dockerenv`, `/proc/1/cgroup`, or env vars;
+- disables service inspection (`systemctl`) for non-systemd environments;
+- falls back from `ss` to `netstat` and from `ip` to `ifconfig` when tooling is missing;
+- returns rich error details so that callers can differentiate permission issues from unsupported features;
+- keeps feature flags in sync via `adapter.getSupportedFeatures()` so monitors can short-circuit unsupported actions.
 
 ## 🚀 Installation
 

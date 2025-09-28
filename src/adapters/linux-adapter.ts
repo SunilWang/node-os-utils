@@ -1,5 +1,6 @@
 import os from 'os';
 import { promises as fs } from 'fs';
+import * as fsSync from 'fs';
 import { BasePlatformAdapter } from '../core/platform-adapter';
 import { CommandExecutor } from '../utils/command-executor';
 import { CommandResult, SupportedFeatures } from '../types/platform';
@@ -31,6 +32,7 @@ interface CpuStatSnapshot {
  */
 export class LinuxAdapter extends BasePlatformAdapter {
   private executor: CommandExecutor;
+  private readonly containerMode: boolean;
   private readonly processListCommand = 'ps -eo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args=';
   private readonly cpuUsageSamplingInterval = 200;
 
@@ -52,6 +54,10 @@ export class LinuxAdapter extends BasePlatformAdapter {
   constructor() {
     super('linux');
     this.executor = new CommandExecutor('linux');
+    this.containerMode = this.detectContainerEnvironment();
+    if (this.containerMode) {
+      this.supportedFeatures.system.services = false;
+    }
   }
 
   /**
@@ -977,8 +983,17 @@ export class LinuxAdapter extends BasePlatformAdapter {
     try {
       const result = await this.executeCommand('ss -tuln');
       return this.parseNetworkConnections(result.stdout);
-    } catch (error) {
-      throw this.createCommandError('getNetworkConnections', error);
+    } catch (primaryError) {
+      try {
+        const result = await this.executeCommand('netstat -tuln');
+        this.validateCommandResult(result, 'netstat -tuln');
+        return this.parseNetstatConnections(result.stdout);
+      } catch (fallbackError) {
+        throw this.createCommandError('getNetworkConnections', {
+          primary: this.summarizeErrorDetails(primaryError),
+          fallback: this.summarizeErrorDetails(fallbackError)
+        });
+      }
     }
   }
 
@@ -1075,6 +1090,9 @@ export class LinuxAdapter extends BasePlatformAdapter {
    * 获取系统服务
    */
   async getSystemServices(): Promise<any> {
+    if (this.containerMode) {
+      throw this.createUnsupportedError('system.services (container)');
+    }
     try {
       const result = await this.executeCommand('systemctl list-units --type=service --no-pager');
       return this.parseSystemServices(result.stdout);
@@ -1187,6 +1205,36 @@ export class LinuxAdapter extends BasePlatformAdapter {
           foreignAddress: fields[5] || '*:*'
         });
       }
+    }
+
+    return connections;
+  }
+
+  private parseNetstatConnections(output: string): any[] {
+    const lines = output.split('\n').filter(line => {
+      const trimmed = line.trim();
+      return trimmed && !trimmed.startsWith('Proto') && !trimmed.startsWith('Active');
+    });
+
+    const connections: any[] = [];
+
+    for (const line of lines) {
+      const fields = line.trim().split(/\s+/);
+      if (fields.length < 5) {
+        continue;
+      }
+
+      const protocol = fields[0].toLowerCase();
+      const hasState = fields.length >= 6;
+      const localFieldIndex = 3;
+      const foreignFieldIndex = 4;
+
+      connections.push({
+        protocol,
+        state: hasState ? fields[5].toLowerCase() : 'unknown',
+        localAddress: fields[localFieldIndex],
+        foreignAddress: fields[foreignFieldIndex] || '*:*'
+      });
     }
 
     return connections;
@@ -1377,5 +1425,38 @@ export class LinuxAdapter extends BasePlatformAdapter {
     }
 
     return { message: String(error) };
+  }
+
+  /**
+   * 检测当前进程是否运行在容器环境中
+   *
+   * 通过常见标记文件和 cgroup 信息判断，若命中则代表部分系统能力（如 systemd）不可用。
+   */
+  private detectContainerEnvironment(): boolean {
+    try {
+      const indicatorPaths = ['/.dockerenv', '/run/.containerenv'];
+      for (const path of indicatorPaths) {
+        if (fsSync.existsSync(path)) {
+          return true;
+        }
+      }
+
+      const cgroupPath = '/proc/1/cgroup';
+      if (fsSync.existsSync(cgroupPath)) {
+        const content = fsSync.readFileSync(cgroupPath, 'utf8');
+        if (/(docker|containerd|kubepods|lxc|podman)/i.test(content)) {
+          return true;
+        }
+      }
+
+      const envIndicators = ['CONTAINER', 'KUBERNETES_SERVICE_HOST'];
+      if (envIndicators.some(key => process.env[key])) {
+        return true;
+      }
+    } catch {
+      // 检测失败时默认视为非容器环境
+    }
+
+    return false;
   }
 }
