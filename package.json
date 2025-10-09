@@ -1,6 +1,6 @@
 {
   "name": "node-os-utils",
-  "version": "2.0.1-beta.2",
+  "version": "2.0.1",
   "description": "Advanced cross-platform operating system monitoring utilities with TypeScript support",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
