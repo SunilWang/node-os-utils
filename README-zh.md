@@ -79,7 +79,8 @@ if (!report.supported) {
 - 通过 `/.dockerenv`、`/proc/1/cgroup` 或环境变量识别 Docker/Podman/Kubernetes；
 - 检测到容器后禁用 `systemctl` 服务枚举，避免非 systemd 环境下报错；
 - 当 `ss` 缺失时回退到 `netstat`，`ip` 缺失时回退到 `ifconfig`；
-- 在返回的 `MonitorError` 中携带详细的主备命令错误，便于区分权限问题与真正的不支持。
+- 在返回的 `MonitorError` 中携带详细的主备命令错误，便于区分权限问题与真正的不支持；
+- 通过 `adapter.getSupportedFeatures()` 保持特性标志同步，帮助监控器在功能不受支持时提前短路。
 
 ## 🚀 安装
 
@@ -253,7 +254,7 @@ enum ErrorCode {
 - **Linux 命令回退**：大多数数据来自 `/proc`，若 `ip`、`ss` 等工具缺失，会自动回退到 `ifconfig`、`netstat`。你也可以提前通过 `osutils.checkPlatformCapabilities()` 验证依赖。
 - 建议检查 `MonitorResult.error.code`，依据不同错误类型（超时、权限、平台不支持）给用户友好的提示。
 
-## 📂 完整 API 参考
+## 📚 完整 API 参考
 
 ### 🔥 CPU 监控器
 
