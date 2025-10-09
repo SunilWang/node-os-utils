@@ -59,4 +59,18 @@ typings/
 package-lock.json
 .env
 .idea
+.vscode
 
+# TypeScript build output
+dist/
+*.tsbuildinfo
+
+# Documentation output
+docs/
+
+# Editor directories and files
+.vscode/
+*.swp
+*.swo
+*~
+.history

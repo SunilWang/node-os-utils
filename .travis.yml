@@ -1,7 +1,85 @@
 language: node_js
+
+# Node.js versions to test against
 node_js:
-  - "8.15.1"
-  - "12.18.0"
-  - "14.16.0"
+  - "18"
+  - "20" 
+  - "22"
+
+# Operating systems
+os:
+  - linux
+  - osx
+
+# Test matrix
+matrix:
+  # Allow macOS tests on specific Node.js versions to reduce build time
+  exclude:
+    - os: osx
+      node_js: "20"
+  # Allow failures on Node.js 22 (latest, may have compatibility issues)
+  allow_failures:
+    - node_js: "22"
+  # Don't wait for allowed failures
+  fast_finish: true
+
+# Caching for better performance
+cache:
+  directories:
+    - node_modules
+    - ~/.npm
+    - ~/.cache
+
+# Environment variables
+env:
+  - NODE_ENV=test
+
+# Before install hook
+before_install:
+  # Ensure we have a recent version of npm
+  - npm install -g npm@latest
+
+# Install dependencies
+install:
+  # Use npm ci for faster, reliable, reproducible builds
+  - npm ci
+
+# Pre-script setup
+before_script:
+  # Display versions for debugging
+  - node --version
+  - npm --version
+  - npx tsc --version
+
+# Build and test script
 script:
-  - "npm run test"
+  # Build TypeScript
+  - npm run build
+  
+  # Run linting
+  - npm run lint:check
+  
+  # Run tests
+  - npm run test
+  
+  # Run platform-specific tests
+  - npm run test:current-platform
+
+# After success
+after_success:
+  # Run coverage if available
+  - npm run test:coverage || true
+
+# Branches to build
+branches:
+  only:
+    - master
+    - main
+    - develop
+    - /^v\d+\.\d+\.\d+.*$/  # version tags
+
+# Notifications
+notifications:
+  email:
+    on_success: change
+    on_failure: always
