@@ -300,13 +300,19 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    * 转换 CPU 使用率信息
    */
   private transformCPUUsage(rawData: any): CPUUsage {
+    const iowait = this.safeParseNumber(rawData.iowait);
+    const rawOverall = this.safeParseNumber(rawData.overall || rawData.usage);
+    const overall = this.cpuConfig.excludeIowait
+      ? Math.max(0, rawOverall - iowait)
+      : rawOverall;
+
     return {
-      overall: this.safeParseNumber(rawData.overall || rawData.usage),
+      overall,
       cores: rawData.cores || [],
       user: this.safeParseNumber(rawData.user),
       system: this.safeParseNumber(rawData.system || rawData.sys),
       idle: this.safeParseNumber(rawData.idle),
-      iowait: this.safeParseNumber(rawData.iowait),
+      iowait,
       irq: this.safeParseNumber(rawData.irq),
       softirq: this.safeParseNumber(rawData.softirq)
     };

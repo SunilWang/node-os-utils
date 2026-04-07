@@ -167,7 +167,12 @@ const osutils = new OSUtils({
   debug: false,
 
   // Monitor-specific configurations
-  cpu: { cacheTTL: 30000 },
+  cpu: {
+    cacheTTL: 30000,
+    // Exclude iowait from the overall CPU usage percentage (Linux only).
+    // Default: false (iowait is included, matching traditional tool behavior)
+    excludeIowait: false
+  },
   memory: { cacheTTL: 5000 },
   disk: { cacheTTL: 60000 }
 });
@@ -302,6 +307,25 @@ if (loadAvg.success) {
 | `frequency()` | `Promise<MonitorResult<FrequencyInfo[]>>` | Current CPU frequencies | ⚠️ Limited |
 | `getCacheInfo()` | `Promise<MonitorResult<any>>` | CPU cache hierarchy information | ⚠️ Limited |
 | `coreCount()` | `Promise<MonitorResult<{ physical: number; logical: number }>>` | Physical/logical core counts | ✅ All |
+
+#### CPU Configuration
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `excludeIowait` | `boolean` | `false` | When `true`, I/O wait time is excluded from the `overall` CPU usage percentage. Useful in I/O-heavy environments where iowait would otherwise inflate reported CPU usage. `iowait` is still available as a separate field in `usageDetailed()`. Linux only. |
+
+```typescript
+// Exclude iowait from overall CPU usage (Linux I/O-heavy workloads)
+const osutils = new OSUtils({
+  cpu: { excludeIowait: true }
+});
+
+const result = await osutils.cpu.usageDetailed();
+if (result.success) {
+  console.log('Overall (excl. iowait):', result.data.overall + '%');
+  console.log('iowait:', result.data.iowait + '%'); // still available
+}
+```
 
 #### Real-time CPU Monitoring
 

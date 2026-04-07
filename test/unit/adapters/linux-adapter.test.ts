@@ -193,6 +193,93 @@ describe('LinuxAdapter 内部解析逻辑', () => {
     expect(result.model).to.be.a('string').and.to.have.length.greaterThan(0);
   });
 
+  // ——— #37 修复：df 遇到无权限挂载点时不应整体失败 ———
+
+  it('getDiskInfo() 在 df 遇到权限错误但 stdout 有效时应正常返回磁盘列表', async () => {
+    const adapter = new LinuxAdapter();
+
+    (adapter as any).executeCommand = async () => ({
+      stdout: [
+        'Filesystem      Size  Used Avail Use% Mounted on',
+        '/dev/sda1        50G   20G   30G  40% /',
+        '/dev/sdb1       100G   60G   40G  60% /data'
+      ].join('\n'),
+      stderr: 'df: /run/user/1000/doc: Operation not permitted',
+      exitCode: 1,
+      platform: 'linux',
+      executionTime: 5,
+      command: 'df -h'
+    });
+
+    const result = await adapter.getDiskInfo();
+    expect(result).to.be.an('array').with.lengthOf(2);
+    expect(result[0].mountpoint).to.equal('/');
+    expect(result[1].mountpoint).to.equal('/data');
+  });
+
+  it('getDiskInfo() 在 df stdout 为空时应抛出错误', async () => {
+    const adapter = new LinuxAdapter();
+
+    (adapter as any).executeCommand = async () => ({
+      stdout: '',
+      stderr: 'df: command not found',
+      exitCode: 127,
+      platform: 'linux',
+      executionTime: 0,
+      command: 'df -h'
+    });
+
+    try {
+      await adapter.getDiskInfo();
+      expect.fail('应该抛出 MonitorError');
+    } catch (error: any) {
+      expect(error).to.be.instanceOf(MonitorError);
+    }
+  });
+
+  it('getDiskUsage() 在 df 遇到权限错误但 stdout 有效时应正常返回磁盘列表', async () => {
+    const adapter = new LinuxAdapter();
+
+    (adapter as any).executeCommand = async () => ({
+      stdout: [
+        'Filesystem     1B-blocks       Used  Available Use% Mounted on',
+        '/dev/sda1     53687091200 21474836480 32212254720  40% /',
+        '/dev/sdb1    107374182400 64424509440 42949672960  60% /data'
+      ].join('\n'),
+      stderr: 'df: /run/user/1000/doc: Operation not permitted',
+      exitCode: 1,
+      platform: 'linux',
+      executionTime: 5,
+      command: 'df -B1'
+    });
+
+    const result = await adapter.getDiskUsage();
+    expect(result).to.be.an('array').with.lengthOf(2);
+    expect(result[0].mountPoint).to.equal('/');
+    expect(result[1].mountPoint).to.equal('/data');
+    expect(result[0].usagePercentage).to.equal(40);
+  });
+
+  it('getDiskUsage() 在 df stdout 为空时应抛出错误', async () => {
+    const adapter = new LinuxAdapter();
+
+    (adapter as any).executeCommand = async () => ({
+      stdout: '',
+      stderr: 'df: command not found',
+      exitCode: 127,
+      platform: 'linux',
+      executionTime: 0,
+      command: 'df -B1'
+    });
+
+    try {
+      await adapter.getDiskUsage();
+      expect.fail('应该抛出 MonitorError');
+    } catch (error: any) {
+      expect(error).to.be.instanceOf(MonitorError);
+    }
+  });
+
   it('应在 ss 不可用时回退到 netstat 解析连接', async () => {
     const adapter = new LinuxAdapter();
     const internal = adapter as any;

@@ -238,7 +238,11 @@ export class LinuxAdapter extends BasePlatformAdapter {
   async getDiskInfo(): Promise<any> {
     try {
       const result = await this.executeCommand('df -h');
-      this.validateCommandResult(result, 'df -h');
+      // df 遇到无权限挂载点（如 /run/user/1000/doc FUSE 挂载）会以 exit code 1 退出，
+      // 但 stdout 仍包含其余挂载点的完整数据。只要有可解析的输出就继续处理。
+      if (!result.stdout || result.stdout.trim().split('\n').length < 2) {
+        this.validateCommandResult(result, 'df -h');
+      }
       return this.parseDiskInfo(result.stdout);
     } catch (error) {
       throw this.createCommandError('getDiskInfo', error);
@@ -967,6 +971,10 @@ export class LinuxAdapter extends BasePlatformAdapter {
   async getDiskUsage(): Promise<any> {
     try {
       const result = await this.executeCommand('df -B1');
+      // 同 getDiskInfo：df 遇到无权限挂载点时 exit code 为 1，但 stdout 数据仍有效
+      if (!result.stdout || result.stdout.trim().split('\n').length < 2) {
+        this.validateCommandResult(result, 'df -B1');
+      }
       return this.parseDiskUsage(result.stdout);
     } catch (error) {
       throw this.createCommandError('getDiskUsage', error);

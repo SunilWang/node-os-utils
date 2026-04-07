@@ -133,6 +133,14 @@ export interface CPUConfig extends MonitorConfig {
    * 负载平均值时间窗口（分钟）
    */
   loadAverageWindows?: number[];
+
+  /**
+   * 计算 overall CPU 使用率时是否排除 I/O 等待时间（iowait）
+   *
+   * - `false`（默认）：iowait 计入 overall，与大多数传统监控工具行为一致
+   * - `true`：iowait 从 overall 中剔除，反映 CPU 实际计算负载（适合 I/O 密集型场景）
+   */
+  excludeIowait?: boolean;
 }
 
 /**

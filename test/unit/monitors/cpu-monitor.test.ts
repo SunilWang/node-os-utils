@@ -179,6 +179,100 @@ describe('CPUMonitor', () => {
   });
 });
 
+describe('CPUMonitor — excludeIowait 配置项', () => {
+  // adapter 返回 overall=50, iowait=5
+  const usageWithIowait = {
+    overall: 50,
+    cores: [],
+    user: 30,
+    system: 15,
+    idle: 50,
+    iowait: 5,
+    irq: 0,
+    softirq: 0
+  };
+
+  function createAdapter(): PlatformAdapter {
+    return {
+      getPlatform: () => 'linux',
+      isSupported: () => true,
+      executeCommand: async () => ({ stdout: '', stderr: '', exitCode: 0, platform: 'linux', executionTime: 0, command: '' }),
+      readFile: async () => '',
+      fileExists: async () => true,
+      getCPUInfo: async () => ({}),
+      getCPUUsage: async () => usageWithIowait,
+      getCPUTemperature: async () => [],
+      getMemoryInfo: async () => ({}),
+      getMemoryUsage: async () => ({}),
+      getDiskInfo: async () => ({}),
+      getDiskIO: async () => ({}),
+      getNetworkInterfaces: async () => ({}),
+      getNetworkStats: async () => ({}),
+      getProcesses: async () => [],
+      getProcessInfo: async () => ({}),
+      getSystemInfo: async () => ({}),
+      getSystemLoad: async () => ({ load1: 0, load5: 0, load15: 0 }),
+      getDiskUsage: async () => ({}),
+      getDiskStats: async () => ({}),
+      getMounts: async () => ({}),
+      getFileSystems: async () => ({}),
+      getNetworkConnections: async () => [],
+      getDefaultGateway: async () => ({}),
+      getProcessList: async () => [],
+      killProcess: async () => true,
+      getProcessOpenFiles: async () => [],
+      getProcessEnvironment: async () => ({}),
+      getSystemUptime: async () => ({}),
+      getSystemUsers: async () => [],
+      getSystemServices: async () => [],
+      getSupportedFeatures: () => ({
+        cpu: { info: true, usage: true, temperature: false, frequency: false, cache: false, perCore: false, cores: false },
+        memory: { info: true, usage: true, swap: false, pressure: false, detailed: false, virtual: false },
+        disk: { info: true, io: false, health: false, smart: false, filesystem: false, usage: true, stats: false, mounts: false, filesystems: false },
+        network: { interfaces: false, stats: false, connections: false, bandwidth: false, gateway: false },
+        process: { list: false, details: false, tree: false, monitor: false, info: false, kill: false, openFiles: false, environment: false },
+        system: { info: false, load: false, uptime: false, users: false, services: false }
+      })
+    } as PlatformAdapter;
+  }
+
+  it('默认（excludeIowait=false）：overall 包含 iowait', async () => {
+    const monitor = new CPUMonitor(createAdapter());
+    const result = await monitor.usageDetailed();
+    expect(result.success).to.be.true;
+    if (!result.success) return;
+    expect(result.data.overall).to.equal(50);
+    expect(result.data.iowait).to.equal(5);
+  });
+
+  it('excludeIowait=true：overall 应减去 iowait', async () => {
+    const monitor = new CPUMonitor(createAdapter(), { excludeIowait: true });
+    const result = await monitor.usageDetailed();
+    expect(result.success).to.be.true;
+    if (!result.success) return;
+    expect(result.data.overall).to.equal(45); // 50 - 5
+    expect(result.data.iowait).to.equal(5);   // iowait 字段本身不受影响
+  });
+
+  it('excludeIowait=true：usage() 简单接口也同步排除 iowait', async () => {
+    const monitor = new CPUMonitor(createAdapter(), { excludeIowait: true });
+    const result = await monitor.usage();
+    expect(result.success).to.be.true;
+    if (!result.success) return;
+    expect(result.data).to.equal(45);
+  });
+
+  it('excludeIowait=true：iowait 大于 overall 时 overall 不应为负数', async () => {
+    const adapter = createAdapter();
+    (adapter as any).getCPUUsage = async () => ({ overall: 3, iowait: 5, cores: [], user: 0, system: 0, idle: 97, irq: 0, softirq: 0 });
+    const monitor = new CPUMonitor(adapter, { excludeIowait: true });
+    const result = await monitor.usageDetailed();
+    expect(result.success).to.be.true;
+    if (!result.success) return;
+    expect(result.data.overall).to.equal(0);
+  });
+});
+
 describe('CPUMonitor — Deno 兼容性降级', () => {
   function createFailingAdapter(): PlatformAdapter {
     const base = {
