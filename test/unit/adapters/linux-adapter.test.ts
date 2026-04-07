@@ -177,6 +177,22 @@ describe('LinuxAdapter 内部解析逻辑', () => {
     }
   });
 
+  it('T022: getCPUInfo() 在读取 /proc/cpuinfo 失败时应降级到 os.cpus() 数据而非抛出异常', async () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+
+    // stub readFile 使 /proc/cpuinfo 读取失败
+    internal.readFile = async () => {
+      throw new MonitorError('/proc/cpuinfo 不可访问', ErrorCode.COMMAND_FAILED, 'linux');
+    };
+
+    const result = await adapter.getCPUInfo();
+    expect(result).to.be.an('object');
+    expect(result.cores).to.be.a('number').and.to.be.greaterThan(0);
+    expect(result.threads).to.be.a('number').and.to.be.greaterThan(0);
+    expect(result.model).to.be.a('string').and.to.have.length.greaterThan(0);
+  });
+
   it('应在 ss 不可用时回退到 netstat 解析连接', async () => {
     const adapter = new LinuxAdapter();
     const internal = adapter as any;

@@ -74,3 +74,8 @@ docs/
 *.swo
 *~
 .history
+.specify
+CLAUDE.md
+AGENTS.md
+.claude
+specs

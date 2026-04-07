@@ -54,6 +54,16 @@ export class CommandExecutor {
     } catch (error: any) {
       const executionTime = Date.now() - startTime;
 
+      // 处理非对象异常（如字符串、数字、null、undefined）——Deno 兼容层可能抛出这类值
+      if (error === null || error === undefined || typeof error !== 'object') {
+        throw new MonitorError(
+          `Command failed: ${String(error)}`,
+          ErrorCode.COMMAND_FAILED,
+          this.platform,
+          { command, executionTime, rawError: String(error) }
+        );
+      }
+
       // 处理不同类型的错误
       if (error.killed && error.signal) {
         // 超时或被杀死的进程
