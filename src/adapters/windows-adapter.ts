@@ -2,6 +2,7 @@ import os from 'os';
 import { promises as fs } from 'fs';
 
 import { BasePlatformAdapter } from '../core/platform-adapter';
+import { BaseMonitor } from '../core/base-monitor';
 import { CommandExecutor } from '../utils/command-executor';
 import { CommandResult, SupportedFeatures } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
@@ -100,7 +101,11 @@ export class WindowsAdapter extends BasePlatformAdapter {
         maxFrequency = this.safeParseInt(info.MaxClockSpeed, maxFrequency);
       }
     } catch {
-      // 忽略 WMI 错误，使用 Node.js 信息
+      // PowerShell/WMI 不可用（如 Deno 兼容层），降级到纯 os 模块数据
+      BaseMonitor.warnDegradation(
+        'cpu.command_failed',
+        'Windows PowerShell/WMI unavailable, falling back to os.cpus() data'
+      );
     }
 
     return {
@@ -176,7 +181,11 @@ export class WindowsAdapter extends BasePlatformAdapter {
         };
       }
     } catch {
-      // 兼容性问题时忽略，保留基础信息
+      // PowerShell/WMI 不可用（如 Deno 兼容层），降级到纯 os 模块数据
+      BaseMonitor.warnDegradation(
+        'memory.command_failed',
+        'Windows PowerShell/WMI unavailable, falling back to os.totalmem()/os.freemem() data'
+      );
     }
 
     return memoryInfo;
@@ -269,10 +278,14 @@ export class WindowsAdapter extends BasePlatformAdapter {
       }));
     } catch (error: any) {
       if (error instanceof MonitorError) {
-        return [];
+        throw error;
       }
-
-      return [];
+      throw new MonitorError(
+        `getNetworkStats failed: ${error?.message || String(error)}`,
+        ErrorCode.COMMAND_FAILED,
+        'win32',
+        { originalError: error }
+      );
     }
   }
 

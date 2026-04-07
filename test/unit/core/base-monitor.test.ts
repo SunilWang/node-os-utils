@@ -183,3 +183,40 @@ describe('BaseMonitor', () => {
     expect(monitor.getCacheStats()?.size).to.equal(0);
   });
 });
+
+describe('BaseMonitor.warnDegradation — Deno 兼容性降级警告', () => {
+  let originalWarn: typeof console.warn;
+  let warnCalls: string[];
+
+  beforeEach(() => {
+    // 重置静态 Set（访问私有静态属性）
+    (BaseMonitor as any).warnedDegradations?.clear();
+    originalWarn = console.warn;
+    warnCalls = [];
+    console.warn = (...args: any[]) => { warnCalls.push(args.join(' ')); };
+  });
+
+  afterEach(() => {
+    console.warn = originalWarn;
+    (BaseMonitor as any).warnedDegradations?.clear();
+  });
+
+  it('T024: 相同 key 首次调用时应触发 console.warn', () => {
+    (BaseMonitor as any).warnDegradation('cpu.command_failed', 'PowerShell WMI 不可用');
+    expect(warnCalls).to.have.lengthOf(1);
+    expect(warnCalls[0]).to.include('[node-os-utils]');
+    expect(warnCalls[0]).to.include('cpu');
+  });
+
+  it('T024: 相同 key 第二次调用时不应重复触发 console.warn', () => {
+    (BaseMonitor as any).warnDegradation('cpu.command_failed', 'PowerShell WMI 不可用');
+    (BaseMonitor as any).warnDegradation('cpu.command_failed', 'PowerShell WMI 不可用');
+    expect(warnCalls).to.have.lengthOf(1);
+  });
+
+  it('T024: 不同 key 应各自独立触发一次 console.warn', () => {
+    (BaseMonitor as any).warnDegradation('cpu.command_failed', 'CPU 降级');
+    (BaseMonitor as any).warnDegradation('memory.command_failed', 'Memory 降级');
+    expect(warnCalls).to.have.lengthOf(2);
+  });
+});

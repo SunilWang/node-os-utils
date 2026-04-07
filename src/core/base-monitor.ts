@@ -85,6 +85,25 @@ export abstract class BaseMonitor<T> extends EventEmitter {
   protected cache: CacheManager;
   protected subscriptions: Set<MonitorSubscription> = new Set();
 
+  /** 已输出过降级警告的 key 集合（进程级别去重） */
+  private static readonly warnedDegradations = new Set<string>();
+
+  /**
+   * 输出首次降级警告（相同 key 仅警告一次）
+   * 供适配器和监控器在命令执行失败并降级时调用
+   * @param key 降级标识，格式 "{monitor}.{type}"，如 "cpu.command_failed"
+   * @param reason 人类可读的降级原因
+   */
+  static warnDegradation(key: string, reason: string): void {
+    if (!BaseMonitor.warnedDegradations.has(key)) {
+      BaseMonitor.warnedDegradations.add(key);
+      const monitor = key.split('.')[0];
+      console.warn(
+        `[node-os-utils] ${monitor} degraded: ${reason}. Some features may not be available in the current runtime environment.`
+      );
+    }
+  }
+
   constructor(
     adapter: PlatformAdapter,
     config: MonitorConfig = {},

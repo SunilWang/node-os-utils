@@ -5,6 +5,7 @@
 
 import { expect } from 'chai'
 import { CommandExecutor } from '../../../src/utils/command-executor'
+import { MonitorError, ErrorCode } from '../../../src/types/errors'
 
 describe('CommandExecutor Unit Tests', function() {
   let executor: CommandExecutor
@@ -175,5 +176,45 @@ describe('CommandExecutor Unit Tests', function() {
       expect(result.exitCode).to.equal(0)
       expect(chunks.join('')).to.contain('stream output')
     })
+  })
+})
+
+describe('CommandExecutor — Deno 兼容性：非标准异常处理', function() {
+  it('T023: 应将字符串类型的非标准异常统一捕获为 MonitorError(COMMAND_FAILED)', async function() {
+    const executor = new CommandExecutor('test-platform')
+    const internal = executor as any
+
+    // 模拟 Deno 兼容层抛出非 Error 实例（字符串）
+    internal.executeWithTimeout = async () => {
+      // eslint-disable-next-line @typescript-eslint/no-throw-literal
+      throw 'Deno compat layer: exec failed unexpectedly'
+    }
+
+    try {
+      await executor.execute('echo test')
+      expect.fail('应该抛出错误')
+    } catch (error: any) {
+      expect(error).to.be.instanceOf(MonitorError)
+      expect(error.code).to.equal(ErrorCode.COMMAND_FAILED)
+    }
+  })
+
+  it('T023: 应将自定义对象类型的非标准异常统一捕获为 MonitorError(COMMAND_FAILED)', async function() {
+    const executor = new CommandExecutor('test-platform')
+    const internal = executor as any
+
+    // 模拟 Deno 兼容层抛出普通对象（非 Error 实例）
+    internal.executeWithTimeout = async () => {
+      // eslint-disable-next-line @typescript-eslint/no-throw-literal
+      throw { message: 'DENO_EXEC_ERROR', code: 'ERR_DENO_COMPAT' }
+    }
+
+    try {
+      await executor.execute('echo test')
+      expect.fail('应该抛出错误')
+    } catch (error: any) {
+      expect(error).to.be.instanceOf(MonitorError)
+      expect(error.code).to.equal(ErrorCode.COMMAND_FAILED)
+    }
   })
 })
