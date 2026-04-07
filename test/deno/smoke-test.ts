@@ -5,7 +5,12 @@
  * 运行方式：deno run --allow-read --allow-env --allow-sys test/deno/smoke-test.ts
  *
  * SC-005: 降级响应时间 < 5000ms
+ *
+ * 注意：dist 产物为 CommonJS 格式，需通过 createRequire 加载，
+ * 否则 Deno 默认将 .js 视为 ESM，导致 "exports is not defined" 错误。
  */
+
+import { createRequire } from 'node:module';
 
 const MAX_MS = 5000;
 
@@ -13,8 +18,10 @@ const MAX_MS = 5000;
 (async () => {
   const START = Date.now();
 
+  // 使用 createRequire 显式以 CommonJS 模式加载 dist 产物
+  const require = createRequire(import.meta.url);
   // @ts-ignore — 仅在 Deno 运行时下执行
-  const { createOSUtils } = await import('../../dist/src/index.js');
+  const { createOSUtils } = require('../../dist/src/index.js');
 
   const utils = createOSUtils();
 
