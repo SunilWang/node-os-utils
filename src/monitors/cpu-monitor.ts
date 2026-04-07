@@ -502,7 +502,21 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
 
   /**
    * 获取 CPU 平均信息（同步版本，向后兼容）
-   * @returns CPU 平均信息对象或 'not supported'
+   * Get CPU average info (sync, for backward compatibility)
+   *
+   * @deprecated
+   * 此方法在 Windows 及 Deno 等环境下 `usage` 固定返回 0，无法反映真实 CPU 使用率。
+   * This method always returns `usage: 0` on Windows and Deno-like environments,
+   * and cannot reflect real-time CPU utilization.
+   *
+   * 请迁移到异步方法 / Please migrate to the async API:
+   * ```ts
+   * const result = await osUtils.cpu.usage();
+   * if (result.success) console.log(result.data); // 实时 CPU 使用率（%） / real-time CPU usage (%)
+   * ```
+   * 此方法将在未来版本中移除。/ This method will be removed in a future release.
+   *
+   * @returns CPU 平均信息对象或 'not supported' / CPU average info object or 'not supported'
    */
   average(): any {
     try {
