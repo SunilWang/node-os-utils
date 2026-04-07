@@ -167,7 +167,12 @@ const osutils = new OSUtils({
   debug: false,
 
   // 监控器特定配置
-  cpu: { cacheTTL: 30000 },
+  cpu: {
+    cacheTTL: 30000,
+    // 是否将 iowait 从整体 CPU 使用率中排除（仅 Linux 生效）
+    // 默认 false：iowait 计入 overall，与传统监控工具行为一致
+    excludeIowait: false
+  },
   memory: { cacheTTL: 5000 },
   disk: { cacheTTL: 60000 }
 });
@@ -302,6 +307,25 @@ if (loadAvg.success) {
 | `frequency()` | `Promise<MonitorResult<FrequencyInfo[]>>` | 当前 CPU 频率信息 | ⚠️ 有限 |
 | `getCacheInfo()` | `Promise<MonitorResult<any>>` | CPU 缓存层级信息 | ⚠️ 有限 |
 | `coreCount()` | `Promise<MonitorResult<{ physical: number; logical: number }>>` | 物理/逻辑核心数量 | ✅ 全部 |
+
+#### CPU 配置项
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `excludeIowait` | `boolean` | `false` | 为 `true` 时，I/O 等待时间（iowait）将从 `overall` 使用率中剔除，适合 I/O 密集型场景下避免 CPU 使用率虚高。`iowait` 仍作为独立字段在 `usageDetailed()` 中返回。仅 Linux 生效。 |
+
+```typescript
+// 在 I/O 密集型 Linux 环境中排除 iowait
+const osutils = new OSUtils({
+  cpu: { excludeIowait: true }
+});
+
+const result = await osutils.cpu.usageDetailed();
+if (result.success) {
+  console.log('整体使用率（不含 iowait）:', result.data.overall + '%');
+  console.log('iowait:', result.data.iowait + '%'); // 仍可单独读取
+}
+```
 
 #### 实时 CPU 监控
 
