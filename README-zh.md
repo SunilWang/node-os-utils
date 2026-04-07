@@ -1197,6 +1197,42 @@ const config = {
 - [node-machine-id](https://github.com/automation-stack/node-machine-id) - 唯一机器标识
 - [cpu-features](https://github.com/mscdex/cpu-features) - CPU 特性检测
 
+## 🦕 Deno 兼容性
+
+`node-os-utils` 支持在 Deno 的 Node.js 兼容层（`deno run --node-modules-dir`）下运行。当 Deno 的兼容层无法执行原生 shell 命令（如 Windows 上的 PowerShell），库会**优雅降级**而非抛出异常：
+
+| 操作 | 降级行为 |
+|------|---------|
+| `cpu.info()` | 降级到 `os.cpus()` 基础数据 |
+| `memory.info()` | 降级到 `os.totalmem()` / `os.freemem()` 基础数据 |
+| `disk.info()`、`network.stats()`、`process.list()` | 返回 `success: false` 的 `MonitorResult` |
+
+首次降级时会输出一次性警告：
+
+```
+[node-os-utils] cpu degraded: Windows PowerShell/WMI unavailable, falling back to os.cpus() data. Some features may not be available in the current runtime environment.
+```
+
+**示例：**
+```ts
+// deno run --allow-read --allow-env --allow-sys app.ts
+import { createOSUtils } from 'node-os-utils';
+
+const utils = createOSUtils();
+const cpu = await utils.cpu.info();
+if (cpu.success) {
+  console.log(cpu.data.threads); // Deno 下也能正常工作
+} else {
+  console.log('CPU 信息不可用:', cpu.error.message);
+}
+```
+
+## 特性标志同步说明
+
+当监控器启用降级模式时，适配器的 `getSupportedFeatures()` 返回的特性标志可能仍显示 `true`，
+但实际上某些功能已降级。建议在捕获到 `MonitorResult.success === false` 时以结果为准，
+而非依赖特性标志进行预检查。
+
 ## ❓ 常见问题
 
 **问：为什么某些功能在 Windows 上不工作？**

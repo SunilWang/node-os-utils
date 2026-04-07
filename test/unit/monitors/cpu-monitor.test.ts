@@ -178,3 +178,84 @@ describe('CPUMonitor', () => {
     expect(data).to.deep.equal({ load1: 0.5, load5: 0.8, load15: 1.1 });
   });
 });
+
+describe('CPUMonitor — Deno 兼容性降级', () => {
+  function createFailingAdapter(): PlatformAdapter {
+    const base = {
+      getPlatform: () => 'win32',
+      isSupported: (_: string) => true,
+      executeCommand: async () => ({ stdout: '', stderr: '', exitCode: 0, platform: 'win32', executionTime: 0, command: '' }),
+      readFile: async () => '',
+      fileExists: async () => false,
+      getCPUInfo: async () => {
+        // 降级数据：PowerShell 失败，返回 os.cpus() 基础数据
+        const cpus = require('os').cpus();
+        return {
+          model: cpus[0]?.model || 'Unknown',
+          manufacturer: 'Unknown',
+          architecture: require('os').arch(),
+          cores: Math.max(1, Math.floor(cpus.length / 2)),
+          threads: cpus.length,
+          baseFrequency: cpus[0]?.speed || 0,
+          maxFrequency: cpus[0]?.speed || 0,
+          cache: {},
+          features: []
+        };
+      },
+      getCPUUsage: async () => {
+        // 降级数据：从 os.cpus() 计算
+        const cpus = require('os').cpus();
+        const total = cpus.reduce((sum: number, c: any) => sum + (Object.values(c.times) as number[]).reduce((a: number, b: number) => a + b, 0), 0);
+        const idle = cpus.reduce((sum: number, c: any) => sum + c.times.idle, 0);
+        const usage = total > 0 ? ((total - idle) / total) * 100 : 0;
+        return { overall: usage.toFixed(1), cores: [], user: '0', system: '0', idle: (100 - usage).toFixed(1), iowait: '0', irq: '0', softirq: '0' };
+      },
+      getMemoryInfo: async () => ({}),
+      getMemoryUsage: async () => ({}),
+      getDiskInfo: async () => ({}),
+      getDiskIO: async () => ({}),
+      getNetworkInterfaces: async () => ({}),
+      getNetworkStats: async () => ({}),
+      getProcesses: async () => ([]),
+      getProcessInfo: async () => ({}),
+      getSystemInfo: async () => ({}),
+      getSystemLoad: async () => ({ load1: require('os').loadavg()[0], load5: require('os').loadavg()[1], load15: require('os').loadavg()[2] }),
+      getDiskUsage: async () => ({}),
+      getDiskStats: async () => ({}),
+      getMounts: async () => ({}),
+      getFileSystems: async () => ({}),
+      getNetworkConnections: async () => ({}),
+      getDefaultGateway: async () => ({}),
+      getProcessList: async () => ([]),
+      killProcess: async () => true,
+      getProcessOpenFiles: async () => ([]),
+      getProcessEnvironment: async () => ({}),
+      getSystemUptime: async () => ({}),
+      getSystemUsers: async () => ([]),
+      getSystemServices: async () => ([]),
+      getSupportedFeatures: () => ({
+        cpu: { info: true, usage: true, temperature: false, frequency: true, cache: false, perCore: false, cores: true },
+        memory: { info: true, usage: true, swap: false, pressure: false, detailed: false, virtual: false },
+        disk: { info: true, io: false, health: false, smart: false, filesystem: true, usage: true, stats: false, mounts: true, filesystems: true },
+        network: { interfaces: true, stats: true, connections: false, bandwidth: false, gateway: false },
+        process: { list: true, details: false, tree: false, monitor: false, info: false, kill: false, openFiles: false, environment: false },
+        system: { info: true, load: true, uptime: true, users: false, services: false }
+      })
+    };
+    return base as unknown as PlatformAdapter;
+  }
+
+  it('T020: average() 应在适配器返回降级数据时不因格式差异二次失败', async () => {
+    const monitor = new CPUMonitor(createFailingAdapter());
+    const result = await monitor.loadAverage();
+    expect(result.success).to.be.true;
+  });
+
+  it('T020: usage() 应在适配器返回降级数据时正确传递使用率', async () => {
+    const monitor = new CPUMonitor(createFailingAdapter());
+    const result = await monitor.usage();
+    expect(result.success).to.be.true;
+    if (!result.success) return;
+    expect(result.data).to.be.a('number');
+  });
+});

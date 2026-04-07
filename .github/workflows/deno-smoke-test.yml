@@ -1,0 +1,41 @@
+name: Deno Compatibility Smoke Test
+
+on:
+  push:
+    branches: [master, develop, '003-fix-deno-compat']
+  pull_request:
+    branches: [master]
+
+jobs:
+  deno-smoke-test:
+    name: Deno Smoke Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # 非阻断性：Deno 兼容层问题不应阻止合并，仅作可观测性指标
+    continue-on-error: true
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Run Deno smoke test
+        run: deno run --allow-read --allow-env --allow-sys test/deno/smoke-test.ts
+        timeout-minutes: 2

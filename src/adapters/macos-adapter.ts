@@ -1,6 +1,7 @@
 import os from 'os';
 
 import { BasePlatformAdapter } from '../core/platform-adapter';
+import { BaseMonitor } from '../core/base-monitor';
 import { CommandExecutor } from '../utils/command-executor';
 import { CommandResult, SupportedFeatures } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
@@ -80,7 +81,25 @@ export class MacOSAdapter extends BasePlatformAdapter {
         results[3].status === 'fulfilled' ? results[3].value : null
       ]);
 
-      return this.parseCPUInfo(brand?.stdout || '', cores?.stdout || '', threads?.stdout || '', freq?.stdout || '');
+      const info = this.parseCPUInfo(brand?.stdout || '', cores?.stdout || '', threads?.stdout || '', freq?.stdout || '');
+
+      // 若 sysctl 命令全部失败，降级到 os.cpus() 基础数据
+      if (!info.cores || !info.threads) {
+        BaseMonitor.warnDegradation(
+          'cpu.command_failed',
+          'macOS sysctl unavailable, falling back to os.cpus() data'
+        );
+        const cpus = os.cpus();
+        const logicalCores = cpus.length || 1;
+        info.model = cpus[0]?.model || info.model || 'Unknown';
+        info.cores = Math.max(1, Math.floor(logicalCores / 2));
+        info.threads = logicalCores;
+        info.baseFrequency = cpus[0]?.speed || 0;
+        info.maxFrequency = cpus[0]?.speed || 0;
+        info.architecture = os.arch();
+      }
+
+      return info;
     } catch (error) {
       throw this.createCommandError('getCPUInfo', error);
     }

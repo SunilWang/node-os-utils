@@ -1195,6 +1195,36 @@ const config = {
 - [node-machine-id](https://github.com/automation-stack/node-machine-id) - Unique machine identification
 - [cpu-features](https://github.com/mscdex/cpu-features) - CPU feature detection
 
+## 🦕 Deno Compatibility
+
+`node-os-utils` works under Deno's Node.js compatibility layer (`deno run --node-modules-dir`). When Deno's compat layer cannot execute native shell commands (e.g. PowerShell on Windows), the library **degrades gracefully** rather than throwing:
+
+| Operation | Degraded Behavior |
+|-----------|-------------------|
+| `cpu.info()` | Falls back to `os.cpus()` data |
+| `memory.info()` | Falls back to `os.totalmem()` / `os.freemem()` |
+| `disk.info()`, `network.stats()`, `process.list()` | Returns `MonitorResult` with `success: false` |
+
+A one-time warning is emitted on first degradation:
+
+```
+[node-os-utils] cpu degraded: Windows PowerShell/WMI unavailable, falling back to os.cpus() data. Some features may not be available in the current runtime environment.
+```
+
+**Example:**
+```ts
+// deno run --allow-read --allow-env --allow-sys app.ts
+import { createOSUtils } from 'node-os-utils';
+
+const utils = createOSUtils();
+const cpu = await utils.cpu.info();
+if (cpu.success) {
+  console.log(cpu.data.threads); // works even in Deno
+} else {
+  console.log('CPU info not available:', cpu.error.message);
+}
+```
+
 ## ❓ FAQ
 
 **Q: Why does some functionality not work on Windows?**

@@ -2,6 +2,7 @@ import os from 'os';
 import { promises as fs } from 'fs';
 import * as fsSync from 'fs';
 import { BasePlatformAdapter } from '../core/platform-adapter';
+import { BaseMonitor } from '../core/base-monitor';
 import { CommandExecutor } from '../utils/command-executor';
 import { CommandResult, SupportedFeatures } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
@@ -118,8 +119,25 @@ export class LinuxAdapter extends BasePlatformAdapter {
     try {
       const cpuinfoContent = await this.readFile(this.paths.cpuinfo);
       return this.parseCPUInfo(cpuinfoContent);
-    } catch (error) {
-      throw this.createCommandError('getCPUInfo', error);
+    } catch {
+      // /proc/cpuinfo 不可访问（如 Deno 兼容层），降级到 os.cpus() 基础数据
+      BaseMonitor.warnDegradation(
+        'cpu.command_failed',
+        'Linux /proc/cpuinfo unreadable, falling back to os.cpus() data'
+      );
+      const cpus = os.cpus();
+      const logicalCores = cpus.length || 1;
+      return {
+        model: cpus[0]?.model || 'Unknown',
+        manufacturer: 'Unknown',
+        architecture: os.arch(),
+        cores: Math.max(1, Math.floor(logicalCores / 2)),
+        threads: logicalCores,
+        baseFrequency: cpus[0]?.speed || 0,
+        maxFrequency: cpus[0]?.speed || 0,
+        cache: {},
+        features: []
+      };
     }
   }
 

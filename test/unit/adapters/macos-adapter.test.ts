@@ -185,6 +185,22 @@ describe('MacOSAdapter 内部解析逻辑', () => {
     expect(result).to.deep.equal({ gateway: '192.168.1.1', interface: 'en0' });
   });
 
+  it('T022: getCPUInfo() 在 sysctl 命令全部失败时应降级到 os.cpus() 数据而非抛出异常', async () => {
+    const adapter = new MacOSAdapter();
+    const internal = adapter as any;
+
+    // stub executeCommand 使所有 sysctl 命令失败
+    internal.executeCommand = async () => {
+      throw new MonitorError('sysctl 不可用', ErrorCode.COMMAND_FAILED, 'darwin');
+    };
+
+    const result = await adapter.getCPUInfo();
+    expect(result).to.be.an('object');
+    expect(result.cores).to.be.a('number').and.to.be.greaterThan(0);
+    expect(result.threads).to.be.a('number').and.to.be.greaterThan(0);
+    expect(result.model).to.be.a('string').and.to.have.length.greaterThan(0);
+  });
+
   it('在 top 失败时应回退到 iostat 获取 CPU 使用率', async () => {
     const adapter = new MacOSAdapter();
     const internal = adapter as any;
