@@ -204,8 +204,23 @@ export class LinuxAdapter extends BasePlatformAdapter {
     try {
       const meminfoContent = await this.readFile(this.paths.meminfo);
       return this.parseMemoryInfo(meminfoContent);
-    } catch (error) {
-      throw this.createCommandError('getMemoryInfo', error);
+    } catch {
+      // /proc/meminfo 不可访问（如 Deno 兼容层权限限制），降级到 os 模块基础数据
+      BaseMonitor.warnDegradation(
+        'memory.command_failed',
+        'Linux /proc/meminfo unreadable, falling back to os.totalmem()/os.freemem() data'
+      );
+      const total = os.totalmem();
+      const free = os.freemem();
+      return {
+        total: Math.round(total / 1024),
+        free: Math.round(free / 1024),
+        used: Math.round((total - free) / 1024),
+        shared: 0,
+        buffers: 0,
+        cached: 0,
+        available: Math.round(free / 1024)
+      };
     }
   }
 
