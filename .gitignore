@@ -78,4 +78,7 @@ docs/
 CLAUDE.md
 AGENTS.md
 .claude
+.agents
+.codex
+.cursor
 specs
