@@ -7,6 +7,10 @@ import { CommandExecutor } from '../utils/command-executor';
 import { CommandResult, SupportedFeatures } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
 import { MonitorError, ErrorCode } from '../types/errors';
+import {
+  isValidPositiveProcessId,
+  normalizeProcessSignal
+} from '../utils/process-killer';
 
 /**
  * Windows 平台适配器
@@ -331,8 +335,17 @@ export class WindowsAdapter extends BasePlatformAdapter {
     }
   }
 
-  /** 获取进程信息 */
+  /**
+   * 获取指定进程信息。
+   *
+   * @param pid 目标进程 ID，必须为大于 0 的安全整数
+   * @returns 进程信息；运行时参数非法时返回 null
+   */
   async getProcessInfo(pid: number): Promise<any> {
+    if (!isValidPositiveProcessId(pid)) {
+      return null;
+    }
+
     try {
       const processes = await this.executePowerShell(
         `Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" | Select-Object ProcessId,ParentProcessId,Name,CommandLine,CreationDate,Priority,ThreadCount,WorkingSetSize | ConvertTo-Json`
@@ -352,9 +365,25 @@ export class WindowsAdapter extends BasePlatformAdapter {
     return this.getProcessList();
   }
 
-  /** 杀死进程 */
+  /**
+   * 通过 taskkill 终止指定进程。
+   *
+   * @param pid 目标进程 ID，必须为大于 0 的安全整数
+   * @param signal SIGKILL 时强制终止，其他信号保持普通终止行为
+   * @returns 命令执行成功时返回 true，否则返回 false
+   */
   async killProcess(pid: number, signal?: string): Promise<boolean> {
-    const command = signal === 'SIGKILL'
+    if (!isValidPositiveProcessId(pid)) {
+      return false;
+    }
+
+    const normalizedSignal = normalizeProcessSignal(signal ?? 'SIGTERM');
+    if (normalizedSignal === null) {
+      return false;
+    }
+
+    const forceKillSignal = os.constants.signals.SIGKILL;
+    const command = normalizedSignal === 'SIGKILL' || normalizedSignal === forceKillSignal
       ? `taskkill /PID ${pid} /F`
       : `taskkill /PID ${pid}`;
 

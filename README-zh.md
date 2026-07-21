@@ -564,7 +564,9 @@ if (currentProc.success && currentProc.data) {
 | `children(parentPid)` | `Promise<MonitorResult<ProcessInfo[]>>` | 子进程列表（需启用配置） | ⚠️ 有限 |
 | `tree(rootPid?)` | `Promise<MonitorResult<any>>` | 进程层次结构 | ⚠️ 有限 |
 | `stats()` | `Promise<MonitorResult<{ total: number; running: number; sleeping: number; waiting: number; zombie: number; stopped: number; unknown: number; totalCpuUsage: number; totalMemoryUsage: DataSize }>>` | 进程统计汇总 | ✅ 全部 |
-| `kill(pid, signal?)` | `Promise<MonitorResult<boolean>>` | 终止进程 | ⚠️ 有限 |
+| `kill(pid, signal?)` | `Promise<MonitorResult<boolean>>` | 使用校验后的信号终止数字 PID | ⚠️ 有限 |
+
+所有基于 PID 的进程查询都会先校验运行时参数，再调用平台命令。`kill()` 支持 `TERM` / `SIGTERM` 等信号名称或十进制信号编号。运行时参数非法时返回 `data: false`，且参数不会传入 shell。Unix 的 `kill()` 保留 PID `0` / 负数对应的原生进程组语义；Windows 要求正整数 PID，并将 `SIGKILL` / `KILL` / `9` 映射为强制 `taskkill`。
 
 ### 🖥️ 系统监控器
 

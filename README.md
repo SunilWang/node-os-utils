@@ -563,7 +563,9 @@ if (currentProc.success && currentProc.data) {
 | `children(parentPid)` | `Promise<MonitorResult<ProcessInfo[]>>` | Child processes (requires config) | ⚠️ Limited |
 | `tree(rootPid?)` | `Promise<MonitorResult<any>>` | Process hierarchy | ⚠️ Limited |
 | `stats()` | `Promise<MonitorResult<{ total: number; running: number; sleeping: number; waiting: number; zombie: number; stopped: number; unknown: number; totalCpuUsage: number; totalMemoryUsage: DataSize }>>` | Aggregate process statistics | ✅ All |
-| `kill(pid, signal?)` | `Promise<MonitorResult<boolean>>` | Terminate process | ⚠️ Limited |
+| `kill(pid, signal?)` | `Promise<MonitorResult<boolean>>` | Terminate a numeric PID with a validated signal | ⚠️ Limited |
+
+All PID-based process lookups validate runtime values before invoking platform commands. `kill()` accepts signal names such as `TERM` / `SIGTERM` or decimal signal numbers. Invalid runtime values return `data: false` and are never passed to a shell. Unix keeps the native PID `0` / negative process-group semantics for `kill()`; Windows requires a positive PID and maps `SIGKILL` / `KILL` / `9` to forced `taskkill`.
 
 ### 🖥️ System Monitor
 

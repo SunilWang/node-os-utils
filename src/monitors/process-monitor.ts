@@ -8,6 +8,11 @@ import {
 } from '../types';
 import { PlatformAdapter } from '../types/platform';
 import { CacheManager } from '../core/cache-manager';
+import {
+  isValidPositiveProcessId,
+  isValidProcessId,
+  isValidProcessSignal
+} from '../utils/process-killer';
 
 /**
  * 进程监控器
@@ -58,9 +63,16 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
   }
 
   /**
-   * 根据 PID 获取进程信息
+   * 根据 PID 获取进程信息。
+   *
+   * @param pid 目标进程 ID，必须为大于 0 的安全整数
+   * @returns 进程信息；运行时参数非法时返回 data=null
    */
   async byPid(pid: ProcessId): Promise<MonitorResult<ProcessInfo | null>> {
+    if (!isValidPositiveProcessId(pid)) {
+      return this.createSuccessResult(null);
+    }
+
     const cacheKey = `process-${pid}`;
 
     return this.executeWithCache(
@@ -263,11 +275,19 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
   }
 
   /**
-   * 杀死进程
+   * 向指定进程发送终止信号。
+   *
+   * @param pid 目标进程 ID，必须为安全整数；Unix 平台允许使用进程组语义
+   * @param signal 信号名称或十进制编号，默认 SIGTERM
+   * @returns 终止操作结果；运行时参数非法时返回 data=false
    */
   async kill(pid: ProcessId, signal: string = 'SIGTERM'): Promise<MonitorResult<boolean>> {
     try {
       this.validatePlatformSupport('process.kill');
+
+      if (!isValidProcessId(pid) || !isValidProcessSignal(signal)) {
+        return this.createSuccessResult(false);
+      }
 
       const result = await this.adapter.killProcess(pid, signal);
       return this.createSuccessResult(result);
@@ -277,13 +297,20 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
   }
 
   /**
-   * 获取进程的打开文件
+   * 获取进程的打开文件。
+   *
+   * @param pid 目标进程 ID，必须为大于 0 的安全整数
+   * @returns 打开的文件路径；运行时参数非法时返回空数组
    */
   async openFiles(pid: ProcessId): Promise<MonitorResult<string[]>> {
     if (!this.processConfig.includeOpenFiles) {
       return this.createErrorResult(
         this.createUnsupportedError('process.openFiles (disabled in config)')
       );
+    }
+
+    if (!isValidPositiveProcessId(pid)) {
+      return this.createSuccessResult([]);
     }
 
     const cacheKey = `process-openfiles-${pid}`;
@@ -301,13 +328,20 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
   }
 
   /**
-   * 获取进程的环境变量
+   * 获取进程的环境变量。
+   *
+   * @param pid 目标进程 ID，必须为大于 0 的安全整数
+   * @returns 环境变量；运行时参数非法时返回空对象
    */
   async environment(pid: ProcessId): Promise<MonitorResult<Record<string, string>>> {
     if (!this.processConfig.includeEnvironment) {
       return this.createErrorResult(
         this.createUnsupportedError('process.environment (disabled in config)')
       );
+    }
+
+    if (!isValidPositiveProcessId(pid)) {
+      return this.createSuccessResult({});
     }
 
     const cacheKey = `process-env-${pid}`;

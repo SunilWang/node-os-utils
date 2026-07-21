@@ -65,6 +65,9 @@ const SUPPORTED_FEATURES: SupportedFeatures = {
 class ProcessAdapterStub implements PlatformAdapter {
   public processListCalls = 0
   public processInfoCalls = 0
+  public killProcessCalls: Array<{ pid: number; signal?: string }> = []
+  public processOpenFilesCalls = 0
+  public processEnvironmentCalls = 0
 
   constructor(private readonly options: ProcessStubOptions = {}) {}
 
@@ -122,9 +125,18 @@ class ProcessAdapterStub implements PlatformAdapter {
     return this.options.processes ?? []
   }
 
-  async killProcess(): Promise<boolean> { return true }
-  async getProcessOpenFiles(): Promise<string[]> { return [] }
-  async getProcessEnvironment(): Promise<Record<string, string>> { return {} }
+  async killProcess(pid: number, signal?: string): Promise<boolean> {
+    this.killProcessCalls.push({ pid, signal })
+    return true
+  }
+  async getProcessOpenFiles(): Promise<string[]> {
+    this.processOpenFilesCalls += 1
+    return []
+  }
+  async getProcessEnvironment(): Promise<Record<string, string>> {
+    this.processEnvironmentCalls += 1
+    return {}
+  }
   async getSystemUptime(): Promise<any> { return 0 }
   async getSystemUsers(): Promise<any> { return [] }
   async getSystemServices(): Promise<any> { return [] }
@@ -182,5 +194,78 @@ describe('ProcessMonitor', function() {
     expect(topResult.data).to.have.lengthOf(1)
     expect(topResult.data[0].pid).to.equal(5)
     expect(adapter.processListCalls).to.equal(1)
+  })
+
+  it('kill 应将合法参数传递给平台适配器', async function() {
+    const adapter = new ProcessAdapterStub()
+    const monitor = new ProcessMonitor(adapter)
+
+    const result = await monitor.kill(123, 'SIGTERM')
+
+    expect(result.success).to.be.true
+    if (result.success) {
+      expect(result.data).to.be.true
+    }
+    expect(adapter.killProcessCalls).to.deep.equal([{ pid: 123, signal: 'SIGTERM' }])
+  })
+
+  it('kill 应保留 Unix 的进程组 PID 语义并交由平台适配器处理', async function() {
+    const adapter = new ProcessAdapterStub()
+    const monitor = new ProcessMonitor(adapter)
+
+    await monitor.kill(0, '0')
+    await monitor.kill(-123, 'SIGTERM')
+
+    expect(adapter.killProcessCalls).to.deep.equal([
+      { pid: 0, signal: '0' },
+      { pid: -123, signal: 'SIGTERM' }
+    ])
+  })
+
+  it('kill 应在平台调用前拒绝包含非法字符的信号', async function() {
+    const adapter = new ProcessAdapterStub()
+    const monitor = new ProcessMonitor(adapter)
+
+    const result = await monitor.kill(123, 'TERM;unexpected')
+
+    expect(result.success).to.be.true
+    if (result.success) {
+      expect(result.data).to.be.false
+    }
+    expect(adapter.killProcessCalls).to.be.empty
+  })
+
+  it('kill 应在平台调用前拒绝运行时传入的非数字 PID', async function() {
+    const adapter = new ProcessAdapterStub()
+    const monitor = new ProcessMonitor(adapter)
+    const runtimePid = '123;unexpected' as unknown as number
+
+    const result = await monitor.kill(runtimePid, 'SIGTERM')
+
+    expect(result.success).to.be.true
+    if (result.success) {
+      expect(result.data).to.be.false
+    }
+    expect(adapter.killProcessCalls).to.be.empty
+  })
+
+  it('基于 PID 的查询应在平台调用前拒绝运行时非法参数', async function() {
+    const adapter = new ProcessAdapterStub()
+    const monitor = new ProcessMonitor(adapter, {
+      includeOpenFiles: true,
+      includeEnvironment: true
+    })
+    const runtimePid = '123;unexpected' as unknown as number
+
+    const infoResult = await monitor.byPid(runtimePid)
+    const filesResult = await monitor.openFiles(runtimePid)
+    const environmentResult = await monitor.environment(runtimePid)
+
+    expect(infoResult.success && infoResult.data).to.be.null
+    expect(filesResult.success && filesResult.data).to.deep.equal([])
+    expect(environmentResult.success && environmentResult.data).to.deep.equal({})
+    expect(adapter.processInfoCalls).to.equal(0)
+    expect(adapter.processOpenFilesCalls).to.equal(0)
+    expect(adapter.processEnvironmentCalls).to.equal(0)
   })
 })

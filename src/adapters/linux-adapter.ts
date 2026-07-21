@@ -7,6 +7,7 @@ import { CommandExecutor } from '../utils/command-executor';
 import { CommandResult, SupportedFeatures } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
 import { MonitorError, ErrorCode } from '../types/errors';
+import { isValidPositiveProcessId, sendProcessSignal } from '../utils/process-killer';
 
 interface CpuTimes {
   user: number;
@@ -310,9 +311,16 @@ export class LinuxAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取特定进程信息
+   * 获取特定进程信息。
+   *
+   * @param pid 目标进程 ID，必须为大于 0 的安全整数
+   * @returns 进程信息；运行时参数非法时返回 null
    */
   async getProcessInfo(pid: number): Promise<any> {
+    if (!isValidPositiveProcessId(pid)) {
+      return null;
+    }
+
     try {
       const procPath = `/proc/${pid}`;
       const exists = await this.fileExists(procPath);
@@ -1064,21 +1072,27 @@ export class LinuxAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 杀死进程
+   * 不经过 shell，向指定进程发送信号。
+   *
+   * @param pid 目标进程 ID
+   * @param signal 信号名称或十进制编号，默认 TERM
+   * @returns 信号发送成功时返回 true，否则返回 false
    */
   async killProcess(pid: number, signal: string = 'TERM'): Promise<boolean> {
-    try {
-      const result = await this.executeCommand(`kill -${signal} ${pid}`);
-      return result.exitCode === 0;
-    } catch (error) {
-      return false;
-    }
+    return sendProcessSignal(pid, signal);
   }
 
   /**
-   * 获取进程打开文件
+   * 获取进程打开文件。
+   *
+   * @param pid 目标进程 ID，必须为大于 0 的安全整数
+   * @returns 打开的文件路径；运行时参数非法时返回空数组
    */
   async getProcessOpenFiles(pid: number): Promise<string[]> {
+    if (!isValidPositiveProcessId(pid)) {
+      return [];
+    }
+
     try {
       const result = await this.executeCommand(`lsof -p ${pid} -Fn`);
       return this.parseOpenFiles(result.stdout);
@@ -1088,9 +1102,16 @@ export class LinuxAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取进程环境变量
+   * 获取进程环境变量。
+   *
+   * @param pid 目标进程 ID，必须为大于 0 的安全整数
+   * @returns 环境变量；运行时参数非法时返回空对象
    */
   async getProcessEnvironment(pid: number): Promise<Record<string, string>> {
+    if (!isValidPositiveProcessId(pid)) {
+      return {};
+    }
+
     try {
       const environContent = await this.readFile(`/proc/${pid}/environ`);
       return this.parseEnvironment(environContent);

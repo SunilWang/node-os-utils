@@ -47,6 +47,63 @@ describe('WindowsAdapter 内部行为', () => {
       expect(error).to.be.instanceOf(MonitorError);
     }
   });
+
+  it('killProcess 应在拼接 taskkill 命令前拒绝运行时非法 PID', async () => {
+    const adapter = new WindowsAdapter();
+    const internal = adapter as any;
+    const commands: string[] = [];
+    let powerShellCallCount = 0;
+
+    internal.executeCommand = async (command: string) => {
+      commands.push(command);
+      return {
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        platform: 'win32',
+        executionTime: 0,
+        command
+      };
+    };
+    internal.executePowerShell = async () => {
+      powerShellCallCount += 1;
+      return null;
+    };
+
+    const result = await adapter.killProcess('123&unexpected' as unknown as number, 'SIGTERM');
+    const processInfo = await adapter.getProcessInfo('123&unexpected' as unknown as number);
+
+    expect(result).to.be.false;
+    expect(processInfo).to.be.null;
+    expect(commands).to.be.empty;
+    expect(powerShellCallCount).to.equal(0);
+  });
+
+  it('killProcess 应保留合法 PID 并规范化强制终止信号', async () => {
+    const adapter = new WindowsAdapter();
+    const internal = adapter as any;
+    const commands: string[] = [];
+
+    internal.executeCommand = async (command: string) => {
+      commands.push(command);
+      return {
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        platform: 'win32',
+        executionTime: 0,
+        command
+      };
+    };
+
+    expect(await adapter.killProcess(123, 'SIGTERM')).to.be.true;
+    expect(await adapter.killProcess(456, 'KILL')).to.be.true;
+    expect(await adapter.killProcess(789, 'NOT_A_REAL_SIGNAL')).to.be.false;
+    expect(commands).to.deep.equal([
+      'taskkill /PID 123',
+      'taskkill /PID 456 /F'
+    ]);
+  });
 });
 
 describe('WindowsAdapter — Deno 兼容性降级', () => {
