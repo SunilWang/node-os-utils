@@ -65,8 +65,8 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
         this.validatePlatformSupport('system.uptime');
 
         const rawData = await this.adapter.getSystemUptime();
-        const uptime = this.safeParseNumber(rawData.uptime) * 1000; // 转换为毫秒
-        const bootTime = Date.now() - uptime;
+        const uptime = this.normalizeUptime(rawData); // 统一单位归一化，避免适配器重复转换
+        const bootTime = this.normalizeBootTime(rawData) ?? (Date.now() - uptime);
 
         return {
           uptime,

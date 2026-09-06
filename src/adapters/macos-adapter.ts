@@ -983,7 +983,8 @@ export class MacOSAdapter extends BasePlatformAdapter {
     try {
       const uptimeSeconds = os.uptime();
       return {
-        uptime: uptimeSeconds,
+        uptimeSeconds, // 秒
+        uptime: uptimeSeconds * 1000, // 毫秒，与 Linux/Windows 适配器保持同一契约
         bootTime: Date.now() - uptimeSeconds * 1000
       };
     } catch (error) {

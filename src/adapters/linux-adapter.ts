@@ -1127,9 +1127,12 @@ export class LinuxAdapter extends BasePlatformAdapter {
     try {
       const uptimeContent = await this.readFile(this.paths.uptime);
       const uptimeFields = uptimeContent.trim().split(' ');
+      const uptimeSeconds = this.safeParseNumber(uptimeFields[0]);
       return {
-        uptime: this.safeParseNumber(uptimeFields[0]) * 1000, // 转换为毫秒
-        idleTime: this.safeParseNumber(uptimeFields[1]) * 1000 // 转换为毫秒
+        uptimeSeconds, // 秒
+        uptime: uptimeSeconds * 1000, // 毫秒
+        bootTime: Date.now() - uptimeSeconds * 1000,
+        idleTime: this.safeParseNumber(uptimeFields[1]) * 1000 // 毫秒
       };
     } catch (error) {
       throw this.createCommandError('getSystemUptime', error);

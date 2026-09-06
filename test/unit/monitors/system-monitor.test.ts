@@ -78,3 +78,71 @@ describe('SystemMonitor 服务信息处理', () => {
     expect(result.uptime).to.equal(42000);
   });
 });
+
+describe('SystemMonitor uptime() 单位归一化（issue #47 回归）', () => {
+  function createUptimeAdapter(getSystemUptime: () => Promise<any>) {
+    return {
+      getPlatform: () => 'linux',
+      isSupported: () => true,
+      getSupportedFeatures: () => ({
+        cpu: { info: true, usage: true, temperature: false, frequency: false, cache: false, perCore: false, cores: true },
+        memory: { info: true, usage: true, swap: false, pressure: false, detailed: false, virtual: false },
+        disk: { info: true, io: false, health: false, smart: false, filesystem: true, usage: true, stats: false, mounts: false, filesystems: false },
+        network: { interfaces: true, stats: true, connections: false, bandwidth: false, gateway: false },
+        process: { list: true, details: false, tree: false, monitor: false, info: false, kill: false, openFiles: false, environment: false },
+        system: { info: true, load: true, uptime: true, users: true, services: true }
+      }),
+      getSystemUptime
+    } as any;
+  }
+
+  it('Linux/Windows 适配器返回毫秒时不应再放大 1000 倍', async () => {
+    const uptimeSeconds = 1360; // issue #47 实测值
+    const adapter = createUptimeAdapter(async () => ({
+      uptimeSeconds,
+      uptime: uptimeSeconds * 1000,
+      bootTime: Date.now() - uptimeSeconds * 1000
+    }));
+
+    const result = await new SystemMonitor(adapter).uptime();
+
+    expect(result.success).to.be.true;
+    if (result.success) {
+      expect(result.data.uptime).to.be.within(uptimeSeconds * 1000 - 1000, uptimeSeconds * 1000 + 1000);
+      expect(result.data.uptimeFormatted).to.include('22 minutes');
+      expect(result.data.bootTime).to.be.within(
+        Date.now() - uptimeSeconds * 1000 - 1000,
+        Date.now()
+      );
+    }
+  });
+
+  it('旧版 Linux 契约（仅毫秒 uptime）应保持原值', async () => {
+    const adapter = createUptimeAdapter(async () => ({
+      uptime: 1360 * 1000,
+      idleTime: 999 * 1000
+    }));
+
+    const result = await new SystemMonitor(adapter).uptime();
+
+    expect(result.success).to.be.true;
+    if (result.success) {
+      expect(result.data.uptime).to.equal(1360 * 1000);
+    }
+  });
+
+  it('macOS 历史契约（uptime 为秒 + bootTime）应通过 bootTime 正确推导', async () => {
+    const uptimeSeconds = 1360;
+    const adapter = createUptimeAdapter(async () => ({
+      uptime: uptimeSeconds, // 历史行为：macOS 返回秒
+      bootTime: Date.now() - uptimeSeconds * 1000
+    }));
+
+    const result = await new SystemMonitor(adapter).uptime();
+
+    expect(result.success).to.be.true;
+    if (result.success) {
+      expect(result.data.uptime).to.be.within(uptimeSeconds * 1000 - 1000, uptimeSeconds * 1000 + 1000);
+    }
+  });
+});
