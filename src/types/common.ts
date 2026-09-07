@@ -21,6 +21,9 @@ export type MonitorResult<T> = {
  */
 export class DataSize {
   constructor(public readonly bytes: number) {
+    if (!Number.isFinite(bytes)) {
+      throw new Error('Data size must be a finite number');
+    }
     if (bytes < 0) {
       throw new Error('Data size cannot be negative');
     }

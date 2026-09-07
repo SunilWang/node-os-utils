@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 
 import { BaseMonitor } from '../../../src/core/base-monitor';
+import { CacheManager } from '../../../src/core/cache-manager';
 import { MonitorError, ErrorCode } from '../../../src/types/errors';
 import { PlatformAdapter } from '../../../src/types/platform';
 import { MonitorResult } from '../../../src/types';
@@ -59,8 +60,11 @@ function createAdapterStub(): PlatformAdapter {
 class TestMonitor extends BaseMonitor<{ value: number }> {
   private callCount = 0;
 
-  constructor(adapter: PlatformAdapter) {
-    super(adapter, { cacheTTL: 20 });
+  /** 模拟具体监控器维护的独立子配置对象，用于验证 withConfig/withCaching 的 TTL 同步 */
+  cpuConfig = { cacheTTL: 10, interval: 1000 };
+
+  constructor(adapter: PlatformAdapter, cache?: CacheManager) {
+    super(adapter, { cacheTTL: 20 }, cache);
   }
 
   protected getDefaultConfig() {
@@ -78,6 +82,22 @@ class TestMonitor extends BaseMonitor<{ value: number }> {
   async cachedOperation() {
     return this.executeWithCache('test', async () => {
       this.callCount += 1;
+      return { value: this.callCount };
+    }, 50);
+  }
+
+  async slowCachedOperation(delayMs: number) {
+    return this.executeWithCache('slow', async () => {
+      this.callCount += 1;
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      return { value: this.callCount };
+    }, 50);
+  }
+
+  async timeoutOperation(delayMs: number) {
+    return this.executeWithCache('timeout-test', async () => {
+      this.callCount += 1;
+      await new Promise(resolve => setTimeout(resolve, delayMs));
       return { value: this.callCount };
     }, 50);
   }
@@ -135,6 +155,68 @@ describe('BaseMonitor', () => {
     expect(second.data.value).to.equal(first.data.value + 1);
   });
 
+  it('withCaching 应同步更新缓存 TTL', () => {
+    const monitor = new TestMonitor(createAdapterStub());
+
+    monitor.withCaching(true, 123);
+
+    expect(monitor.getConfig().cacheTTL).to.equal(123);
+    expect(monitor.getCacheStats()).to.not.equal(null);
+    expect((monitor as any).cache.getDefaultTTL()).to.equal(123);
+    // 子配置对象中的 TTL 也应被同步，确保具体监控器读取到新值
+    expect(monitor.cpuConfig.cacheTTL).to.equal(123);
+  });
+
+  it('withConfig 应同步子配置对象中的字段', () => {
+    const monitor = new TestMonitor(createAdapterStub());
+
+    monitor.withConfig({ cacheTTL: 456 });
+
+    expect(monitor.cpuConfig.cacheTTL).to.equal(456);
+  });
+
+  it('executeWithCache 对相同 key 的并发请求会复用 in-flight Promise', async () => {
+    const monitor = new TestMonitor(createAdapterStub());
+
+    const [first, second] = await Promise.all([
+      monitor.slowCachedOperation(30),
+      monitor.slowCachedOperation(30)
+    ]);
+
+    expect(first.success).to.be.true;
+    expect(second.success).to.be.true;
+    if (!first.success || !second.success) {
+      throw new Error('expected success');
+    }
+    // 操作只执行一次，两个调用方拿到相同结果
+    expect(first.data.value).to.equal(1);
+    expect(second.data.value).to.equal(1);
+  });
+
+  it('operation 超过 config.timeout 时返回 TIMEOUT 错误结果，不写入缓存且无 in-flight 残留', async () => {
+    const monitor = new TestMonitor(createAdapterStub());
+    monitor.withConfig({ timeout: 50 });
+
+    const result = await monitor.timeoutOperation(200);
+
+    expect(result.success).to.be.false;
+    if (result.success) {
+      throw new Error('expected failure');
+    }
+    expect(result.error).to.be.instanceOf(MonitorError);
+    expect(result.error.code).to.equal(ErrorCode.TIMEOUT);
+
+    // 超时结果不写入缓存
+    expect(monitor.getCacheStats()?.size).to.equal(0);
+    // in-flight 去重表在超时后无残留
+    expect((monitor as any).inflightRequests.size).to.equal(0);
+
+    // 超时后仍可正常重试，成功结果正常写入缓存
+    const retry = await monitor.timeoutOperation(10);
+    expect(retry.success).to.be.true;
+    expect(monitor.getCacheStats()?.size).to.equal(1);
+  });
+
   it('monitor 方法会触发回调并可取消订阅', async () => {
     const monitor = new TestMonitor(createAdapterStub());
 
@@ -181,6 +263,19 @@ describe('BaseMonitor', () => {
 
     expect(monitor.getActiveSubscriptions()).to.equal(0);
     expect(monitor.getCacheStats()?.size).to.equal(0);
+  });
+
+  it('destroy 不应销毁外部注入的共享 CacheManager', async () => {
+    const sharedCache = new CacheManager({ defaultTTL: 1000 });
+    sharedCache.set('shared-key', { value: 42 });
+
+    const monitor = new TestMonitor(createAdapterStub(), sharedCache);
+    monitor.destroy();
+
+    // 共享缓存由调用方管理，监控器销毁后仍应可用
+    expect(sharedCache.get('shared-key')).to.deep.equal({ value: 42 });
+
+    sharedCache.destroy();
   });
 });
 

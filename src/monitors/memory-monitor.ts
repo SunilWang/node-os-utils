@@ -41,7 +41,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
         const rawData = await this.adapter.getMemoryInfo();
         return this.transformMemoryInfo(rawData);
       },
-      this.memoryConfig.cacheTTL || 2000 // 内存信息缓存 2 秒
+      this.memoryConfig.cacheTTL ?? 2000 // 内存信息缓存 2 秒
     );
   }
 
@@ -65,7 +65,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
           breakdown
         };
       },
-      this.memoryConfig.cacheTTL || 2000
+      this.memoryConfig.cacheTTL ?? 2000
     );
   }
 
@@ -82,7 +82,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
         const memInfo = this.transformMemoryInfo(rawData);
         return memInfo.usagePercentage;
       },
-      this.memoryConfig.cacheTTL || 1000
+      this.memoryConfig.cacheTTL ?? 1000
     );
   }
 
@@ -99,7 +99,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
         const memInfo = this.transformMemoryInfo(rawData);
         return memInfo.available;
       },
-      this.memoryConfig.cacheTTL || 1000
+      this.memoryConfig.cacheTTL ?? 1000
     );
   }
 
@@ -116,7 +116,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
         const memInfo = this.transformMemoryInfo(rawData);
         return memInfo.used;
       },
-      this.memoryConfig.cacheTTL || 1000
+      this.memoryConfig.cacheTTL ?? 1000
     );
   }
 
@@ -140,7 +140,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
         const rawData = await this.adapter.getMemoryInfo();
         return this.transformSwapInfo(rawData);
       },
-      this.memoryConfig.cacheTTL || 2000
+      this.memoryConfig.cacheTTL ?? 2000
     );
   }
 
@@ -164,7 +164,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
         const rawData = await this.adapter.getMemoryInfo();
         return this.calculateMemoryPressure(rawData);
       },
-      this.memoryConfig.cacheTTL || 5000
+      this.memoryConfig.cacheTTL ?? 5000
     );
   }
 
@@ -189,7 +189,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
           buffers: new DataSize(this.safeParseNumber(rawData.buffers))
         };
       },
-      this.memoryConfig.cacheTTL || 2000
+      this.memoryConfig.cacheTTL ?? 2000
     );
   }
 
@@ -205,7 +205,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
         const rawData = await this.adapter.getMemoryInfo();
         return new DataSize(this.safeParseNumber(rawData.total));
       },
-      this.memoryConfig.cacheTTL || 60000 // 总内存很少变化，缓存 1 分钟
+      this.memoryConfig.cacheTTL ?? 60000 // 总内存很少变化，缓存 1 分钟
     );
   }
 
@@ -244,7 +244,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
           }
         };
       },
-      this.memoryConfig.cacheTTL || 2000
+      this.memoryConfig.cacheTTL ?? 2000
     );
   }
 
@@ -305,8 +305,8 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
    */
   private transformMemoryInfo(rawData: any): MemoryInfo {
     const total = new DataSize(this.safeParseNumber(rawData.total));
-    const available = new DataSize(this.safeParseNumber(rawData.available || rawData.free));
-    const used = new DataSize(this.safeParseNumber(rawData.used || (rawData.total - rawData.available)));
+    const available = new DataSize(this.safeParseNumber(rawData.available ?? rawData.free));
+    const used = new DataSize(this.safeParseNumber(rawData.used ?? (rawData.total - rawData.available)));
     const free = new DataSize(this.safeParseNumber(rawData.free));
     const cached = new DataSize(this.safeParseNumber(rawData.cached));
     const buffers = new DataSize(this.safeParseNumber(rawData.buffers));
@@ -350,7 +350,7 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
 
     const total = new DataSize(this.safeParseNumber(swapData.total));
     const used = new DataSize(this.safeParseNumber(swapData.used));
-    const free = new DataSize(this.safeParseNumber(swapData.free || (swapData.total - swapData.used)));
+    const free = new DataSize(this.safeParseNumber(swapData.free ?? (swapData.total - swapData.used)));
 
     const usagePercentage = total.toBytes() > 0
       ? (used.toBytes() / total.toBytes()) * 100
@@ -513,15 +513,16 @@ export class MemoryMonitor extends BaseMonitor<MemoryInfo> {
 
   /**
    * 安全解析数字
+   * 内存字节数语义上不为负，负数统一钳制为 0，避免后续 DataSize 构造抛异常
    */
   private safeParseNumber(value: any): number {
     if (typeof value === 'number') {
-      return isNaN(value) ? 0 : value;
+      return isNaN(value) ? 0 : Math.max(0, value);
     }
 
     if (typeof value === 'string') {
       const parsed = parseFloat(value);
-      return isNaN(parsed) ? 0 : parsed;
+      return isNaN(parsed) ? 0 : Math.max(0, parsed);
     }
 
     return 0;

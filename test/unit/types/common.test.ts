@@ -100,6 +100,12 @@ describe('DataSize Unit Tests', function() {
       expect(() => new DataSize(-1024)).to.throw('Data size cannot be negative')
     })
 
+    it('应该拒绝非有限数值（Infinity/NaN）', function() {
+      expect(() => new DataSize(Infinity)).to.throw('Data size must be a finite number')
+      expect(() => new DataSize(-Infinity)).to.throw('Data size must be a finite number')
+      expect(() => new DataSize(NaN)).to.throw('Data size must be a finite number')
+    })
+
     it('应该处理非常大的数值', function() {
       const size = new DataSize(Number.MAX_SAFE_INTEGER)
       expect(size.bytes).to.equal(Number.MAX_SAFE_INTEGER)

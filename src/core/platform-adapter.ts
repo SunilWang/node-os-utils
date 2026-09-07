@@ -274,11 +274,12 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
    */
   protected safeParseNumber(value: string | number, fallback: number = 0): number {
     if (typeof value === 'number') {
-      return isNaN(value) ? fallback : value;
+      return Number.isFinite(value) ? value : fallback;
     }
 
     const parsed = parseFloat(value);
-    return isNaN(parsed) ? fallback : parsed;
+    // NaN 与 Infinity 均按解析失败处理，避免非有限数污染后续计算
+    return Number.isFinite(parsed) ? parsed : fallback;
   }
 
   /**
@@ -286,11 +287,11 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
    */
   protected safeParseInt(value: string | number, fallback: number = 0, radix: number = 10): number {
     if (typeof value === 'number') {
-      return isNaN(value) ? fallback : Math.floor(value);
+      return Number.isFinite(value) ? Math.floor(value) : fallback;
     }
 
     const parsed = parseInt(value, radix);
-    return isNaN(parsed) ? fallback : parsed;
+    return Number.isFinite(parsed) ? parsed : fallback;
   }
 
   /**

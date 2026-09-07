@@ -268,4 +268,36 @@ describe('ProcessMonitor', function() {
     expect(adapter.processOpenFilesCalls).to.equal(0)
     expect(adapter.processEnvironmentCalls).to.equal(0)
   })
+
+  it('parseStartTime 无法解析时应返回 undefined 且 runtime 不产生 NaN', function() {
+    const adapter = new ProcessAdapterStub()
+    const monitor = new ProcessMonitor(adapter)
+
+    const transform = (monitor as any).transformProcessInfo.bind(monitor)
+
+    // 无法解析的启动时间：startTime/runtime 均降级为 undefined
+    const unknownStart = transform({ pid: 1, ppid: 0, name: 'a', startTime: 'not-a-date' })
+    expect(unknownStart.startTime).to.be.undefined
+    expect(unknownStart.runtime).to.be.undefined
+
+    // 缺失启动时间字段：同样降级为 undefined
+    const missingStart = transform({ pid: 2, ppid: 0, name: 'b' })
+    expect(missingStart.startTime).to.be.undefined
+    expect(missingStart.runtime).to.be.undefined
+
+    // 非有限数值不应传播 NaN
+    const nanStart = transform({ pid: 3, ppid: 0, name: 'c', startTime: NaN })
+    expect(nanStart.startTime).to.be.undefined
+    expect(nanStart.runtime).to.be.undefined
+
+    // 合法毫秒时间戳：正常计算 runtime
+    const now = Date.now()
+    const valid = transform({ pid: 4, ppid: 0, name: 'd', startTime: now - 5000 })
+    expect(valid.startTime).to.equal(now - 5000)
+    expect(valid.runtime).to.be.within(5000, 6000)
+
+    // 合法秒时间戳：自动放大为毫秒
+    const secondsStart = transform({ pid: 5, ppid: 0, name: 'e', startTime: 1700000000 })
+    expect(secondsStart.startTime).to.equal(1700000000 * 1000)
+  })
 })

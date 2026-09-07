@@ -93,9 +93,9 @@ export class CacheManager {
   private enabled: boolean = true;
 
   constructor(config: CacheManagerConfig = {}) {
-    this.defaultTTL = config.defaultTTL || 5000;
-    this.maxSize = config.maxSize || 1000;
-    this.cleanupInterval = config.cleanupInterval || 30000;
+    this.defaultTTL = config.defaultTTL ?? 5000;
+    this.maxSize = config.maxSize ?? 1000;
+    this.cleanupInterval = config.cleanupInterval ?? 30000;
     this.enabled = config.enabled !== false;
     this.stats = {
       size: 0,
@@ -157,10 +157,15 @@ export class CacheManager {
       return;
     }
 
-    const now = Date.now();
-    const timeToLive = ttl || this.defaultTTL;
+    // maxSize 为 0 表示不保留任何缓存项，但仍允许缓存管理器正常工作。
+    if (this.maxSize === 0) {
+      return;
+    }
 
-    // 检查缓存大小限制
+    const now = Date.now();
+    const timeToLive = ttl ?? this.defaultTTL;
+
+    // 插入新键前淘汰最久未使用项；更新已有键不应额外占用容量。
     if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
       this.evictLRU();
     }
@@ -192,9 +197,8 @@ export class CacheManager {
    * 清空所有缓存
    */
   clear(): void {
-    const previousSize = this.cache.size;
+    // clear 是主动清空操作，不计入 evictions（该字段仅统计过期清理次数）
     this.cache.clear();
-    this.stats.evictions += previousSize;
     this.updateStats();
   }
 
@@ -335,7 +339,7 @@ export class CacheManager {
    * 启动定期清理
    */
   private startCleanup(): void {
-    if (this.cleanupTimer || !this.enabled) {
+    if (this.cleanupTimer || !this.enabled || this.cleanupInterval <= 0) {
       return;
     }
 

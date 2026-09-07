@@ -161,6 +161,7 @@ const osutils = new OSUtils({
   maxCacheSize: 1000,
 
   // 执行设置
+  // 超时时间（毫秒），同时作用于监控操作和底层系统命令
   timeout: 10000,
 
   // 调试模式
@@ -611,6 +612,8 @@ if (users.success) {
 | `time()` | `Promise<MonitorResult<{ current: number; timezone: string; utcOffset: number; formatted: string; bootTime?: number }>>` | 当前时间信息 | ✅ 全部 |
 | `healthCheck()` | `Promise<MonitorResult<{ status: 'healthy' | 'warning' | 'critical'; checks: Record<string, boolean>; issues: string[]; score: number }>>` | 系统健康报告 | ⚠️ 有限 |
 
+`overview().resources.networkActivity` 表示自上一次未命中缓存的概览采样以来，网卡累计收发字节数是否增加。首次采样、计数器重置或网络统计不可用时返回 `false`。
+
 ## 🌍 平台兼容性
 
 ### 支持的平台
@@ -675,7 +678,7 @@ if (overview.processes) {
   console.log('进程数:', overview.processes.total);
 }
 if (overview.system?.uptime != null) {
-  console.log('运行时间:', (overview.system.uptime / 3600).toFixed(1) + ' 小时');
+  console.log('运行时间:', (overview.system.uptime / 3600000).toFixed(1) + ' 小时');
 }
 
 // 系统健康检查
@@ -999,6 +1002,8 @@ if (memResult.success) {
 | `osu.drive.info()` | `osutils.disk.info()` |
 | `osu.netstat.inOut()` | `osutils.network.overview()` |
 | `osu.proc.totalProcesses()` | `osutils.process.list().then(r => r.data.length)` |
+
+> **已废弃的旧版同步方法**：向后兼容的同步方法 `disk.free()` / `disk.used()` / `network.inOut()` / `network.stats()` 只返回固定占位值（全为 0），已标记 `@deprecated`。请迁移到异步 API `disk.usage()`、`network.bandwidth()` 和 `network.statsAsync()` 以获取真实数据。这些方法将在未来版本中移除。
 
 ### 迁移示例
 

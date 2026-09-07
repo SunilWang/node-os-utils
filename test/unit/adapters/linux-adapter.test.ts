@@ -91,6 +91,23 @@ describe('LinuxAdapter 内部解析逻辑', () => {
     expect(result.startTime).to.be.at.least(lowerBound);
   });
 
+  it('应正确解析包含空格和右括号的进程名', () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+    const stat = '123 (worker name) R 7 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 500 0 5 0 0 0 0';
+    const status = 'Name:\tworker name\nThreads:\t1\nVmRSS:\t1 kB\n';
+    const result = internal.parseProcessInfo(123, stat, status, 'worker name\\0');
+    expect(result.name).to.equal('worker name');
+    expect(result.state).to.equal('R');
+    expect(result.ppid).to.equal(7);
+
+    const rightParen = '124 (worker )name) S 9 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 500 0 5 0 0 0 0';
+    const resultWithRightParen = internal.parseProcessInfo(124, rightParen, 'Name:\tworker )name\n', '');
+    expect(resultWithRightParen.name).to.equal('worker )name');
+    expect(resultWithRightParen.state).to.equal('S');
+    expect(resultWithRightParen.ppid).to.equal(9);
+  });
+
   it('应优先使用 uname -m 解析体系结构', () => {
     const adapter = new LinuxAdapter();
     const internal = adapter as any;
@@ -223,6 +240,73 @@ describe('LinuxAdapter 内部解析逻辑', () => {
     expect(result.model).to.be.a('string').and.to.have.length.greaterThan(0);
   });
 
+  it('getMemoryInfo() 降级路径应返回字节单位且字段形状与正常路径一致', async () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+
+    // stub readFile 使 /proc/meminfo 读取失败，触发降级路径
+    internal.readFile = async () => {
+      throw new MonitorError('/proc/meminfo 不可访问', ErrorCode.COMMAND_FAILED, 'linux');
+    };
+
+    const result = await adapter.getMemoryInfo();
+    const total = os.totalmem();
+    const free = os.freemem();
+
+    expect(result.total).to.equal(total);
+    expect(result.free).to.equal(free);
+    expect(result.used).to.equal(total - free);
+    expect(result.available).to.equal(free);
+    expect(result.shared).to.equal(0);
+    expect(result.buffers).to.equal(0);
+    expect(result.cached).to.equal(0);
+    expect(result.usagePercentage).to.be.closeTo(((total - free) / total) * 100, 0.0001);
+    expect(result.swap).to.deep.equal({ total: 0, free: 0, used: 0 });
+  });
+
+  it('getProcessInfo() 在进程不存在时应透传 NOT_AVAILABLE，不包装成 COMMAND_FAILED', async () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+
+    internal.fileExists = async () => false;
+
+    try {
+      await adapter.getProcessInfo(999999);
+      expect.fail('应该抛出 MonitorError');
+    } catch (error: any) {
+      expect(error).to.be.instanceOf(MonitorError);
+      expect(error.code).to.equal(ErrorCode.NOT_AVAILABLE);
+    }
+  });
+
+  it('应解析 ifconfig 输出中含连字符的接口名（如 Docker 网桥）', () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+
+    const output = [
+      'br-3f2a1b0c9d8e: flags=4099<UP,BROADCAST,MULTICAST>  mtu 1500',
+      '        inet 172.18.0.1  netmask 255.255.0.0  broadcast 172.18.255.255',
+      '',
+      'eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500',
+      '        inet 192.168.1.10  netmask 255.255.255.0  broadcast 192.168.1.255'
+    ].join('\n');
+
+    const interfaces = internal.parseIfconfigOutput(output);
+
+    expect(interfaces).to.have.lengthOf(2);
+    expect(interfaces[0].name).to.equal('br-3f2a1b0c9d8e');
+    expect(interfaces[0].state).to.equal('up');
+    expect(interfaces[0].addresses[0].address).to.equal('172.18.0.1');
+    expect(interfaces[1].name).to.equal('eth0');
+  });
+
+  it('非容器环境应声明支持 system.services', () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+
+    expect(internal.initializeSupportedFeatures().system.services).to.be.true;
+  });
+
   // ——— #37 修复：df 遇到无权限挂载点时不应整体失败 ———
 
   it('getDiskInfo() 在 df 遇到权限错误但 stdout 有效时应正常返回磁盘列表', async () => {
@@ -232,19 +316,21 @@ describe('LinuxAdapter 内部解析逻辑', () => {
       stdout: [
         'Filesystem      Size  Used Avail Use% Mounted on',
         '/dev/sda1        50G   20G   30G  40% /',
-        '/dev/sdb1       100G   60G   40G  60% /data'
+        '/dev/sdb1       100G   60G   40G  60% /data',
+        '/dev/sdc1        10G    1G    9G  10% /mnt/my data'
       ].join('\n'),
       stderr: 'df: /run/user/1000/doc: Operation not permitted',
       exitCode: 1,
       platform: 'linux',
       executionTime: 5,
-      command: 'df -h'
+      command: 'df -Ph'
     });
 
     const result = await adapter.getDiskInfo();
-    expect(result).to.be.an('array').with.lengthOf(2);
+    expect(result).to.be.an('array').with.lengthOf(3);
     expect(result[0].mountpoint).to.equal('/');
     expect(result[1].mountpoint).to.equal('/data');
+    expect(result[2].mountpoint).to.equal('/mnt/my data');
   });
 
   it('getDiskInfo() 在 df stdout 为空时应抛出错误', async () => {
@@ -256,7 +342,7 @@ describe('LinuxAdapter 内部解析逻辑', () => {
       exitCode: 127,
       platform: 'linux',
       executionTime: 0,
-      command: 'df -h'
+      command: 'df -Ph'
     });
 
     try {
@@ -280,7 +366,7 @@ describe('LinuxAdapter 内部解析逻辑', () => {
       exitCode: 1,
       platform: 'linux',
       executionTime: 5,
-      command: 'df -B1'
+      command: 'df -PB1'
     });
 
     const result = await adapter.getDiskUsage();
@@ -299,7 +385,7 @@ describe('LinuxAdapter 内部解析逻辑', () => {
       exitCode: 127,
       platform: 'linux',
       executionTime: 0,
-      command: 'df -B1'
+      command: 'df -PB1'
     });
 
     try {

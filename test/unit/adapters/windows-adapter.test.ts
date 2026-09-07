@@ -1,9 +1,80 @@
 import { expect } from 'chai';
+import os from 'os';
 
 import { WindowsAdapter } from '../../../src/adapters/windows-adapter';
 import { MonitorError, ErrorCode } from '../../../src/types/errors';
 
 describe('WindowsAdapter 内部行为', () => {
+  it('应按 DMTF 日期中的时区偏移解析进程启动时间', () => {
+    const adapter = new WindowsAdapter();
+    const parse = (adapter as any).parseWmiDate.bind(adapter);
+    // +480 表示本地时间领先 UTC 8 小时。
+    expect(parse('20240101120000.000000+480')).to.equal(Date.UTC(2024, 0, 1, 4, 0, 0));
+    expect(parse('20240101120000.123456-360')).to.equal(Date.UTC(2024, 0, 1, 18, 0, 0, 123));
+  });
+
+  it('应解析 PowerShell 5.1 ConvertTo-Json 的 \\/Date(毫秒)\\/ 格式', () => {
+    const adapter = new WindowsAdapter();
+    const parse = (adapter as any).parseWmiDate.bind(adapter);
+    expect(parse('\\/Date(1704110400000)\\/')).to.equal(1704110400000);
+  });
+
+  it('应解析 PowerShell 7 的 ISO 8601 日期格式', () => {
+    const adapter = new WindowsAdapter();
+    const parse = (adapter as any).parseWmiDate.bind(adapter);
+    expect(parse('2024-01-01T12:00:00+08:00')).to.equal(Date.UTC(2024, 0, 1, 4, 0, 0));
+    expect(parse('2024-01-01T04:00:00Z')).to.equal(Date.UTC(2024, 0, 1, 4, 0, 0));
+  });
+
+  it('无法识别的日期格式应返回 0，而不是用当前时间冒充', () => {
+    const adapter = new WindowsAdapter();
+    const parse = (adapter as any).parseWmiDate.bind(adapter);
+    expect(parse(undefined)).to.equal(0);
+    expect(parse('')).to.equal(0);
+    expect(parse('not-a-date')).to.equal(0);
+  });
+
+  it('getNetworkInterfaces() 应归一化为与 Linux/macOS 一致的数组结构', async () => {
+    const adapter = new WindowsAdapter();
+    const originalNetworkInterfaces = os.networkInterfaces;
+
+    (os as any).networkInterfaces = () => ({
+      'Ethernet': [
+        { address: '192.168.1.10', netmask: '255.255.255.0', family: 'IPv4', mac: 'aa:bb:cc:dd:ee:ff', internal: false, cidr: '192.168.1.10/24' },
+        { address: 'fe80::1', netmask: 'ffff:ffff:ffff:ffff::', family: 'IPv6', mac: 'aa:bb:cc:dd:ee:ff', internal: false, cidr: 'fe80::1/64', scopeid: 12 }
+      ],
+      'Loopback Pseudo-Interface 1': [
+        { address: '127.0.0.1', netmask: '255.0.0.0', family: 'IPv4', mac: '00:00:00:00:00:00', internal: true, cidr: '127.0.0.1/8' }
+      ]
+    });
+
+    try {
+      const result = await adapter.getNetworkInterfaces();
+
+      expect(result).to.be.an('array').with.lengthOf(2);
+
+      const ethernet = result.find((iface: any) => iface.name === 'Ethernet');
+      expect(ethernet).to.exist;
+      expect(ethernet.mac).to.equal('aa:bb:cc:dd:ee:ff');
+      expect(ethernet.state).to.equal('up');
+      expect(ethernet.internal).to.be.false;
+      expect(ethernet.addresses).to.have.lengthOf(2);
+      expect(ethernet.addresses[0]).to.include({
+        address: '192.168.1.10',
+        netmask: '255.255.255.0',
+        family: 'IPv4',
+        internal: false
+      });
+      expect(ethernet.addresses[1].scopeid).to.equal(12);
+
+      const loopback = result.find((iface: any) => iface.name === 'Loopback Pseudo-Interface 1');
+      expect(loopback).to.exist;
+      expect(loopback.internal).to.be.true;
+    } finally {
+      (os as any).networkInterfaces = originalNetworkInterfaces;
+    }
+  });
+
   it('在 WMI 数据缺失 Size 时应限制磁盘占用不为负值', async () => {
     const adapter = new WindowsAdapter();
     const internal = adapter as any;

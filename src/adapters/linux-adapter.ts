@@ -211,16 +211,24 @@ export class LinuxAdapter extends BasePlatformAdapter {
         'memory.command_failed',
         'Linux /proc/meminfo unreadable, falling back to os.totalmem()/os.freemem() data'
       );
+      // os.totalmem()/os.freemem() 返回字节，与 parseMemoryInfo 的字节单位保持一致
       const total = os.totalmem();
       const free = os.freemem();
+      const used = total - free;
       return {
-        total: Math.round(total / 1024),
-        free: Math.round(free / 1024),
-        used: Math.round((total - free) / 1024),
+        total,
+        free,
+        used,
         shared: 0,
         buffers: 0,
         cached: 0,
-        available: Math.round(free / 1024)
+        available: free,
+        usagePercentage: total > 0 ? (used / total) * 100 : 0,
+        swap: {
+          total: 0,
+          free: 0,
+          used: 0
+        }
       };
     }
   }
@@ -234,15 +242,15 @@ export class LinuxAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取磁盘信息
+   * 获取磁盘信息（df -Ph 保证 POSIX 单行输出，避免长设备名折行）
    */
   async getDiskInfo(): Promise<any> {
     try {
-      const result = await this.executeCommand('df -h');
+      const result = await this.executeCommand('df -Ph');
       // df 遇到无权限挂载点（如 /run/user/1000/doc FUSE 挂载）会以 exit code 1 退出，
       // 但 stdout 仍包含其余挂载点的完整数据。只要有可解析的输出就继续处理。
       if (!result.stdout || result.stdout.trim().split('\n').length < 2) {
-        this.validateCommandResult(result, 'df -h');
+        this.validateCommandResult(result, 'df -Ph');
       }
       return this.parseDiskInfo(result.stdout);
     } catch (error) {
@@ -302,7 +310,8 @@ export class LinuxAdapter extends BasePlatformAdapter {
    */
   async getProcesses(): Promise<any> {
     try {
-      const result = await this.executeCommand(this.processListCommand);
+      // 进程数较多时输出可能超过默认 1MB maxBuffer，显式放宽到 10MB
+      const result = await this.executeCommand(this.processListCommand, { maxBuffer: 10 * 1024 * 1024 });
       this.validateCommandResult(result, 'ps command');
       return this.parseProcessList(result.stdout);
     } catch (error) {
@@ -347,6 +356,10 @@ export class LinuxAdapter extends BasePlatformAdapter {
 
       return this.parseProcessInfo(pid, statContent, status, cmdline);
     } catch (error) {
+      // 进程不存在等语义化错误原样透传，不要包装成 COMMAND_FAILED
+      if (error instanceof MonitorError) {
+        throw error;
+      }
       throw this.createCommandError('getProcessInfo', error);
     }
   }
@@ -448,7 +461,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
         load: true,
         uptime: true,
         users: true,
-        services: false // 需要 systemctl
+        services: true // getSystemServices 已实现；容器环境中构造函数会将其改回 false
       }
     };
   }
@@ -488,7 +501,9 @@ export class LinuxAdapter extends BasePlatformAdapter {
       count: cpus.length,
       model: cpus[0]?.['model name'] || 'Unknown',
       vendor: cpus[0]?.['vendor_id'] || 'Unknown',
-      architecture: cpus[0]?.['cpu family'] || 'Unknown'
+      // `cpu family` 是 x86 微架构编号（如 6），不是调用方期待的系统架构名称。
+      // 使用 Node.js 提供的标准架构标识，保持与其他平台适配器一致。
+      architecture: os.arch()
     };
   }
 
@@ -664,7 +679,9 @@ export class LinuxAdapter extends BasePlatformAdapter {
     for (let i = 1; i < lines.length; i++) {
       const fields = lines[i].split(/\s+/);
       if (fields.length >= 6) {
-        const [filesystem, size, used, available, usagePercent, mountpoint] = fields;
+        const [filesystem, size, used, available, usagePercent] = fields;
+        // 挂载点可能含空格，取剩余列拼接
+        const mountpoint = fields.slice(5).join(' ');
 
         disks.push({
           filesystem,
@@ -776,7 +793,8 @@ export class LinuxAdapter extends BasePlatformAdapter {
       const interfaceLine = lines[0];
       if (!interfaceLine) continue;
 
-      const nameMatch = interfaceLine.match(/^(\w+):/);
+      // 接口名允许包含连字符等非单词字符（如 Docker 网桥 br-xxxx），不能用 \w
+      const nameMatch = interfaceLine.match(/^([^\s:]+):/);
       if (!nameMatch) continue;
 
       const name = nameMatch[1];
@@ -870,8 +888,14 @@ export class LinuxAdapter extends BasePlatformAdapter {
    * 综合 /proc/[pid] 下多份文件，拼装进程详细信息
    */
   private parseProcessInfo(pid: number, stat: string, status: string, cmdline: string): any {
-    const statusInfo = this.parseKeyValueOutput(status, '\t');
-    const statFields = stat.split(' ');
+    // /proc/[pid]/status 使用冒号分隔（冒号后通常是制表符），统一按冒号解析。
+    const statusInfo = this.parseKeyValueOutput(status);
+    // comm 字段位于括号内，进程名允许包含空格或右括号；不能直接按空格切分。
+    // 以最后一个右括号作为边界，保留标准 /proc/[pid]/stat 的字段索引。
+    const statMatch = stat.trim().match(/^(\d+)\s+\((.*)\)\s+(.*)$/);
+    const statFields = statMatch
+      ? [statMatch[1], statMatch[2], ...statMatch[3].trim().split(/\s+/)]
+      : stat.trim().split(/\s+/);
     const startTimeTicks = this.safeParseInt(statFields[21]);
     const sysconf = (os as any).constants?.sysconf;
     const hertz = typeof sysconf?.SC_CLK_TCK === 'number' && sysconf.SC_CLK_TCK > 0
@@ -897,9 +921,10 @@ export class LinuxAdapter extends BasePlatformAdapter {
       : 4096;
     const rssBytesFromStat = rssPages > 0 ? rssPages * pageSize : 0;
 
-    const vmRssRaw = statusInfo['VmRSS'] ?? statusInfo['VmRSS:'] ?? '0';
-    const vmSizeRaw = statusInfo['VmSize'] ?? statusInfo['VmSize:'] ?? '0';
-    const threadsRaw = statusInfo['Threads'] ?? statusInfo['Threads:'];
+    // parseKeyValueOutput 以冒号分割，键名不含冒号
+    const vmRssRaw = statusInfo['VmRSS'] ?? '0';
+    const vmSizeRaw = statusInfo['VmSize'] ?? '0';
+    const threadsRaw = statusInfo['Threads'];
 
     // 优先使用 /proc/[pid]/status 中的 KiB 数值，缺失时回退到 stat 的页数
     const rssFromStatus = this.convertToBytes(vmRssRaw, 'kB');
@@ -974,14 +999,14 @@ export class LinuxAdapter extends BasePlatformAdapter {
   // 实现抽象方法
 
   /**
-   * 获取磁盘使用情况
+   * 获取磁盘使用情况（df -PB1 保证 POSIX 单行输出，数值以字节计）
    */
   async getDiskUsage(): Promise<any> {
     try {
-      const result = await this.executeCommand('df -B1');
+      const result = await this.executeCommand('df -PB1');
       // 同 getDiskInfo：df 遇到无权限挂载点时 exit code 为 1，但 stdout 数据仍有效
       if (!result.stdout || result.stdout.trim().split('\n').length < 2) {
-        this.validateCommandResult(result, 'df -B1');
+        this.validateCommandResult(result, 'df -PB1');
       }
       return this.parseDiskUsage(result.stdout);
     } catch (error) {
@@ -1063,7 +1088,8 @@ export class LinuxAdapter extends BasePlatformAdapter {
    */
   async getProcessList(): Promise<any> {
     try {
-      const result = await this.executeCommand(this.processListCommand);
+      // 进程数较多时输出可能超过默认 1MB maxBuffer，显式放宽到 10MB
+      const result = await this.executeCommand(this.processListCommand, { maxBuffer: 10 * 1024 * 1024 });
       this.validateCommandResult(result, 'ps command');
       return this.parseProcessList(result.stdout);
     } catch (error) {
@@ -1181,7 +1207,8 @@ export class LinuxAdapter extends BasePlatformAdapter {
           used: this.safeParseInt(fields[2]),
           available: this.safeParseInt(fields[3]),
           usagePercentage: this.safeParseNumber(fields[4].replace('%', '')),
-          mountPoint: fields[5]
+          // 挂载点可能含空格，取剩余列拼接
+          mountPoint: fields.slice(5).join(' ')
         });
       }
     }

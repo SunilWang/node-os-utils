@@ -15,6 +15,8 @@ import { CacheManager } from '../core/cache-manager';
  */
 export class SystemMonitor extends BaseMonitor<SystemInfo> {
   private systemConfig: SystemConfig;
+  /** 上一次概览采样的网络累计字节数，用于判断两次采样之间是否发生流量。 */
+  private previousNetworkCounters = new Map<string, { rxBytes: number; txBytes: number }>();
 
   constructor(
     adapter: PlatformAdapter,
@@ -29,6 +31,11 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
    * 获取系统基本信息
    */
   async info(): Promise<MonitorResult<SystemInfo>> {
+    if (!this.systemConfig.includeSystemInfo) {
+      return this.createErrorResult(
+        this.createUnsupportedError('system.info (disabled in config)')
+      );
+    }
     const cacheKey = 'system-info';
 
     return this.executeWithCache(
@@ -39,7 +46,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
         const rawData = await this.adapter.getSystemInfo();
         return this.transformSystemInfo(rawData);
       },
-      this.systemConfig.cacheTTL || 60000 // 系统基本信息缓存 1 分钟
+      this.systemConfig.cacheTTL ?? 60000 // 系统基本信息缓存 1 分钟
     );
   }
 
@@ -59,7 +66,9 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
 
     const cacheKey = 'system-uptime';
 
-    return this.executeWithCache(
+    // 仅通过缓存获取 bootTime（固定不变）；uptime 在缓存命中后基于 bootTime 实时重算，
+    // 避免 TTL 内运行时间冻结
+    const baseResult = await this.executeWithCache(
       cacheKey,
       async () => {
         this.validatePlatformSupport('system.uptime');
@@ -68,14 +77,29 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
         const uptime = this.normalizeUptime(rawData); // 统一单位归一化，避免适配器重复转换
         const bootTime = this.normalizeBootTime(rawData) ?? (Date.now() - uptime);
 
-        return {
-          uptime,
-          uptimeFormatted: this.formatUptime(uptime),
-          bootTime
-        };
+        return { uptime, bootTime };
       },
-      this.systemConfig.cacheTTL || 30000
+      this.systemConfig.cacheTTL ?? 30000
     );
+
+    if (!baseResult.success) {
+      return baseResult as MonitorResult<{
+        uptime: number;
+        uptimeFormatted: string;
+        bootTime: number;
+      }>;
+    }
+
+    // 缓存命中时用 bootTime 实时重算；新鲜结果直接使用采样值，保证单次调用的确定性
+    const uptime = baseResult.cached
+      ? Math.max(0, Date.now() - baseResult.data.bootTime)
+      : baseResult.data.uptime;
+
+    return this.createSuccessResult({
+      uptime,
+      uptimeFormatted: this.formatUptime(uptime),
+      bootTime: baseResult.data.bootTime
+    }, baseResult.cached);
   }
 
   /**
@@ -123,7 +147,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
           status
         };
       },
-      this.systemConfig.cacheTTL || 5000
+      this.systemConfig.cacheTTL ?? 5000
     );
   }
 
@@ -134,7 +158,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     username: string;
     terminal: string;
     host: string;
-    loginTime: number;
+    loginTime?: number;
   }>>> {
     if (!this.systemConfig.includeUsers) {
       return this.createErrorResult(
@@ -152,7 +176,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
         const rawData = await this.adapter.getSystemUsers();
         return this.transformUsersList(rawData);
       },
-      this.systemConfig.cacheTTL || 30000
+      this.systemConfig.cacheTTL ?? 30000
     );
   }
 
@@ -181,7 +205,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
         const rawData = await this.adapter.getSystemServices();
         return this.transformServicesList(rawData);
       },
-      this.systemConfig.cacheTTL || 60000
+      this.systemConfig.cacheTTL ?? 60000
     );
   }
 
@@ -221,12 +245,20 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
           systemInfo,
           uptimeInfo,
           loadInfo,
-          usersInfo
+          usersInfo,
+          cpuUsageInfo,
+          memoryInfo,
+          diskUsageInfo,
+          networkStatsInfo
         ] = await Promise.allSettled([
           this.info(),
           this.uptime().catch(() => ({ success: false, data: null })),
           this.load().catch(() => ({ success: false, data: null })),
-          this.users().catch(() => ({ success: false, data: [] }))
+          this.users().catch(() => ({ success: false, data: [] })),
+          Promise.resolve().then(() => this.adapter.getCPUUsage()),
+          Promise.resolve().then(() => this.adapter.getMemoryInfo()),
+          Promise.resolve().then(() => this.adapter.getDiskUsage()),
+          Promise.resolve().then(() => this.adapter.getNetworkStats())
         ]);
 
         const system = {
@@ -240,12 +272,24 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
             loadInfo.value.data!.status : 'unknown'
         };
 
-        // 获取资源使用情况（这里可能需要调用其他监控器）
+        const cpuRaw = cpuUsageInfo.status === 'fulfilled' ? cpuUsageInfo.value : {};
+        const memoryRaw = memoryInfo.status === 'fulfilled' ? memoryInfo.value : {};
+        const disksRaw = diskUsageInfo.status === 'fulfilled' && Array.isArray(diskUsageInfo.value)
+          ? diskUsageInfo.value : [];
+        const networkRaw = networkStatsInfo.status === 'fulfilled' && Array.isArray(networkStatsInfo.value)
+          ? networkStatsInfo.value : [];
+        const totalMemory = this.safeParseNumber(memoryRaw.total);
+        const usedMemory = this.safeParseNumber(memoryRaw.used);
+        const diskPercentages = disksRaw
+          .map((disk: any) => this.safeParseNumber(disk.usagePercentage ?? disk.usePercent))
+          .filter((value: number) => value >= 0);
+
+        const networkActivity = this.detectNetworkActivity(networkRaw);
         const resources = {
-          cpuUsage: 0, // 需要从 CPU 监控器获取
-          memoryUsage: 0, // 需要从内存监控器获取
-          diskUsage: 0, // 需要从磁盘监控器获取
-          networkActivity: false // 需要从网络监控器获取
+          cpuUsage: this.safeParseNumber(cpuRaw.overall ?? cpuRaw.usage),
+          memoryUsage: totalMemory > 0 ? (usedMemory / totalMemory) * 100 : 0,
+          diskUsage: diskPercentages.length > 0 ? Math.max(...diskPercentages) : 0,
+          networkActivity
         };
 
         const counts = {
@@ -265,7 +309,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
           health
         };
       },
-      this.systemConfig.cacheTTL || 30000
+      this.systemConfig.cacheTTL ?? 30000
     );
   }
 
@@ -281,11 +325,11 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
   }>> {
     const cacheKey = 'system-time';
 
-    return this.executeWithCache(
+    // 仅缓存时区/偏移/启动时间等相对静态的信息；current 与 formatted 每次调用实时计算
+    const staticResult = await this.executeWithCache(
       cacheKey,
       async () => {
-        const current = Date.now();
-        const date = new Date(current);
+        const date = new Date();
         const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
         const utcOffset = date.getTimezoneOffset() * -1; // 转换为正确的偏移量
 
@@ -299,16 +343,30 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
           // 忽略错误
         }
 
-        return {
-          current,
-          timezone,
-          utcOffset,
-          formatted: date.toISOString(),
-          bootTime
-        };
+        return { timezone, utcOffset, bootTime };
       },
-      this.systemConfig.cacheTTL || 60000
+      this.systemConfig.cacheTTL ?? 60000
     );
+
+    if (!staticResult.success) {
+      return staticResult as MonitorResult<{
+        current: number;
+        timezone: string;
+        utcOffset: number;
+        formatted: string;
+        bootTime?: number;
+      }>;
+    }
+
+    const current = Date.now();
+
+    return this.createSuccessResult({
+      current,
+      timezone: staticResult.data.timezone,
+      utcOffset: staticResult.data.utcOffset,
+      formatted: new Date(current).toISOString(),
+      bootTime: staticResult.data.bootTime
+    }, staticResult.cached);
   }
 
   /**
@@ -350,8 +408,13 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
               totalScore -= 30;
             } else if (loadResult.data.status === 'high') {
               issues.push(`High system load: ${loadResult.data.load1.toFixed(2)}`);
+              checks.load = false;
               totalScore -= 15;
             }
+          } else if (!loadResult.success) {
+            issues.push(`Failed to check system load: ${loadResult.error.message}`);
+            checks.load = false;
+            totalScore -= 20;
           }
         } catch (error) {
           issues.push('Failed to check system load');
@@ -368,6 +431,10 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
               issues.push('System recently restarted');
               totalScore -= 10;
             }
+          } else if (!uptimeResult.success) {
+            issues.push(`Failed to check system uptime: ${uptimeResult.error.message}`);
+            checks.uptime = false;
+            totalScore -= 10;
           }
         } catch (error) {
           issues.push('Failed to check system uptime');
@@ -389,12 +456,45 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
                 checks.services = false;
                 totalScore -= failedServices.length * 10;
               }
+            } else if (!servicesResult.success) {
+              issues.push(`Failed to check system services: ${servicesResult.error.message}`);
+              checks.services = false;
+              totalScore -= 15;
             }
           } catch (error) {
             issues.push('Failed to check system services');
             checks.services = false;
             totalScore -= 15;
           }
+        }
+
+        // 检查系统资源使用率（复用 overview() 的聚合结果，走缓存不会重复发起系统调用）
+        try {
+          const overviewResult = await this.overview();
+          if (overviewResult.success && overviewResult.data) {
+            const { cpuUsage, memoryUsage, diskUsage } = overviewResult.data.resources;
+
+            // CPU/内存/最差磁盘分区任一 >= 90% 判定资源紧张；磁盘取最差分区，与 overview 口径一致
+            if (cpuUsage >= 90) {
+              issues.push(`High CPU usage: ${cpuUsage.toFixed(1)}%`);
+              checks.resources = false;
+            }
+            if (memoryUsage >= 90) {
+              issues.push(`High memory usage: ${memoryUsage.toFixed(1)}%`);
+              checks.resources = false;
+            }
+            if (diskUsage >= 90) {
+              issues.push(`High disk usage: ${diskUsage.toFixed(1)}%`);
+              checks.resources = false;
+            }
+
+            if (!checks.resources) {
+              totalScore -= 25;
+            }
+          }
+          // 资源数据不可用时保守视为正常，跳过检查（保持 checks.resources = true）
+        } catch (error) {
+          // overview 聚合失败不代表资源异常，保守跳过
         }
 
         // 确定整体健康状态
@@ -415,7 +515,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
           score: Math.max(0, totalScore)
         };
       },
-      this.systemConfig.cacheTTL || 60000
+      this.systemConfig.cacheTTL ?? 60000
     );
   }
 
@@ -539,21 +639,19 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
   }
 
   private extractUptimeSeconds(rawData: any): number | undefined {
-    // 优先读取统一的秒级字段，避免重复转换
+    // 优先读取适配器统一提供的秒级字段，避免单位猜测
     if (typeof rawData?.uptimeSeconds === 'number') {
       return Math.max(0, rawData.uptimeSeconds);
     }
 
-    if (typeof rawData?.uptime === 'number' && rawData.uptime < 1e6) {
-      return Math.max(0, rawData.uptime);
-    }
-
-    if (typeof rawData?.uptime === 'number' && typeof rawData?.bootTime === 'number') {
-      return Math.max(0, (Date.now() - rawData.bootTime) / 1000);
-    }
-
+    // bootTime 比裸 uptime 更可靠，优先基于它推导
     if (typeof rawData?.bootTime === 'number') {
       return Math.max(0, (Date.now() - rawData.bootTime) / 1000);
+    }
+
+    // 裸数字 uptime 按适配器契约统一视为毫秒（三个平台适配器均返回毫秒），不再用阈值猜测单位
+    if (typeof rawData?.uptime === 'number') {
+      return Math.max(0, rawData.uptime / 1000);
     }
 
     return undefined;
@@ -569,9 +667,9 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
       return Date.now() - rawData.uptimeSeconds * 1000;
     }
 
+    // 裸数字 uptime 按毫秒处理（与 normalizeUptime 及适配器契约一致）
     if (typeof rawData?.uptime === 'number') {
-      const uptime = rawData.uptime < 1e6 ? rawData.uptime * 1000 : rawData.uptime;
-      return Date.now() - uptime;
+      return Date.now() - Math.max(0, rawData.uptime);
     }
 
     return undefined;
@@ -582,10 +680,38 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
    */
   private transformLoadAverage(rawLoad: any): LoadAverage {
     return {
-      load1: this.safeParseNumber(rawLoad.load1 || rawLoad[0]),
-      load5: this.safeParseNumber(rawLoad.load5 || rawLoad[1]),
-      load15: this.safeParseNumber(rawLoad.load15 || rawLoad[2])
+      load1: this.safeParseNumber(rawLoad.load1 ?? rawLoad[0]),
+      load5: this.safeParseNumber(rawLoad.load5 ?? rawLoad[1]),
+      load15: this.safeParseNumber(rawLoad.load15 ?? rawLoad[2])
     };
+  }
+
+  /**
+   * 根据相邻两次采样的累计字节数判断当前是否存在网络活动。
+   * 首次采样没有可比较的基线，或计数器发生回退时，均视为无活动。
+   * @param stats 网络接口累计收发统计
+   * @returns 两次采样之间是否有收发字节增长
+   */
+  private detectNetworkActivity(stats: any[]): boolean {
+    const currentCounters = new Map<string, { rxBytes: number; txBytes: number }>();
+    let active = false;
+
+    for (const item of stats) {
+      const name = String(item.interface ?? item.name ?? '');
+      if (!name) continue;
+
+      const rxBytes = this.safeParseNumber(item.rxBytes ?? item.rx_bytes);
+      const txBytes = this.safeParseNumber(item.txBytes ?? item.tx_bytes);
+      const previous = this.previousNetworkCounters.get(name);
+      if (previous && rxBytes >= previous.rxBytes && txBytes >= previous.txBytes
+        && (rxBytes > previous.rxBytes || txBytes > previous.txBytes)) {
+        active = true;
+      }
+      currentCounters.set(name, { rxBytes, txBytes });
+    }
+
+    this.previousNetworkCounters = currentCounters;
+    return active;
   }
 
   /**
@@ -595,7 +721,7 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     username: string;
     terminal: string;
     host: string;
-    loginTime: number;
+    loginTime?: number;
   }> {
     if (!Array.isArray(rawData)) {
       return [];
@@ -772,9 +898,11 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
 
   /**
    * 解析登录时间
+   * @param loginTime 适配器返回的原始登录时间（秒/毫秒时间戳或可解析字符串）
+   * @returns 毫秒时间戳；无法解析时返回 undefined，不再用当前时间冒充登录时间
    */
-  private parseLoginTime(loginTime: any): number {
-    if (typeof loginTime === 'number') {
+  private parseLoginTime(loginTime: any): number | undefined {
+    if (typeof loginTime === 'number' && Number.isFinite(loginTime)) {
       // 如果是时间戳
       if (loginTime > 1000000000000) {
         // 毫秒时间戳
@@ -792,8 +920,8 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
       }
     }
 
-    // 默认返回当前时间
-    return Date.now();
+    // 解析失败返回 undefined，消费方按"登录时间未知"处理
+    return undefined;
   }
 
   /**

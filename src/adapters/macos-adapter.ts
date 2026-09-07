@@ -1,4 +1,5 @@
 import os from 'os';
+import { promises as fs } from 'fs';
 
 import { BasePlatformAdapter } from '../core/platform-adapter';
 import { BaseMonitor } from '../core/base-monitor';
@@ -15,6 +16,9 @@ import { isValidPositiveProcessId, sendProcessSignal } from '../utils/process-ki
  */
 export class MacOSAdapter extends BasePlatformAdapter {
   private executor: CommandExecutor;
+  // args 列必须放在最后：macOS 的 comm/args 是完整路径且可能含空格（如 /Library/My App），
+  // 放在中间会导致后续列按空白切分时错位。
+  private readonly processListCommand = 'ps -axo pid=,ppid=,%cpu=,%mem=,rss=,stat=,user=,args=';
 
   constructor() {
     super('darwin');
@@ -33,22 +37,30 @@ export class MacOSAdapter extends BasePlatformAdapter {
    */
   async readFile(path: string): Promise<string> {
     try {
-      const result = await this.executeCommand(`cat "${path}"`);
-      this.validateCommandResult(result, `cat ${path}`);
-      return result.stdout;
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException & { code?: string };
-      const errorCode = err?.code === 'EACCES'
-        ? ErrorCode.PERMISSION_DENIED
-        : err?.code === 'ENOENT'
-          ? ErrorCode.FILE_NOT_FOUND
-          : ErrorCode.COMMAND_FAILED;
-
+      // 直接使用 fs API，避免经过 shell 时路径中的元字符需要转义
+      return await fs.readFile(path, 'utf8');
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') {
+        throw new MonitorError(
+          `File not found: ${path}`,
+          ErrorCode.FILE_NOT_FOUND,
+          this.platformName,
+          { path }
+        );
+      }
+      if (error?.code === 'EACCES') {
+        throw new MonitorError(
+          `Permission denied: ${path}`,
+          ErrorCode.PERMISSION_DENIED,
+          this.platformName,
+          { path }
+        );
+      }
       throw new MonitorError(
         `Failed to read file: ${path}`,
-        errorCode,
+        ErrorCode.COMMAND_FAILED,
         this.platformName,
-        { path, error: err?.message, code: err?.code }
+        { path, error: error?.message }
       );
     }
   }
@@ -58,8 +70,8 @@ export class MacOSAdapter extends BasePlatformAdapter {
    */
   async fileExists(path: string): Promise<boolean> {
     try {
-      const result = await this.executeCommand(`test -f "${path}"`);
-      return result.exitCode === 0;
+      await fs.access(path);
+      return true;
     } catch {
       return false;
     }
@@ -175,12 +187,12 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 读取 df -h 解析磁盘占用
+   * 读取 df -Ph 解析磁盘占用（-P 保证 POSIX 单行输出，避免长设备名折行）
    */
   async getDiskInfo(): Promise<any> {
     try {
-      const result = await this.executeCommand('df -h');
-      this.validateCommandResult(result, 'df -h');
+      const result = await this.executeCommand('df -Ph');
+      this.validateCommandResult(result, 'df -Ph');
       return this.parseDiskInfo(result.stdout);
     } catch (error) {
       throw this.createCommandError('getDiskInfo', error);
@@ -227,11 +239,12 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 读取 ps -axo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args= 解析进程列表
+   * 读取 ps 进程列表并解析（args 列位于末尾，避免含空格路径导致列错位）
    */
   async getProcesses(): Promise<any> {
     try {
-      const result = await this.executeCommand('ps -axo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args=');
+      // 进程数较多时输出可能超过默认 1MB maxBuffer，显式放宽到 10MB
+      const result = await this.executeCommand(this.processListCommand, { maxBuffer: 10 * 1024 * 1024 });
       this.validateCommandResult(result, 'ps command');
       return this.parseProcessList(result.stdout);
     } catch (error) {
@@ -373,7 +386,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
     return {
       model: brand.trim(),
       manufacturer: brand.includes('Intel') ? 'Intel' : brand.includes('Apple') ? 'Apple' : 'Unknown',
-      architecture: 'Unknown',
+      architecture: os.arch(),
       cores: this.safeParseInt(cores.trim()),
       threads: this.safeParseInt(threads.trim()),
       baseFrequency: freq ? this.safeParseInt(freq.trim()) / 1000000 : 0, // 转换为 MHz
@@ -544,7 +557,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 解析 df -h 输出为磁盘信息
+   * 解析 df -Ph 输出为磁盘信息（POSIX 格式共 6 列，无 inode 列；挂载点可能含空格，取剩余列拼接）
    */
   private parseDiskInfo(output: string): any {
     const lines = output.split('\n').filter(line => line.trim());
@@ -554,8 +567,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
 
     for (let i = 1; i < lines.length; i++) {
       const fields = lines[i].split(/\s+/);
-      if (fields.length >= 9) {
-        const [filesystem, size, used, available, capacity, /* iused */, /* ifree */, /* iusedPercent */, mountpoint] = fields;
+      if (fields.length >= 6) {
+        const [filesystem, size, used, available, capacity] = fields;
+        const mountpoint = fields.slice(5).join(' ');
 
         disks.push({
           filesystem,
@@ -710,32 +724,37 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 解析 ps -axo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args= 输出为进程列表
+   * 解析 ps -axo pid=,ppid=,%cpu=,%mem=,rss=,stat=,user=,args= 输出为进程列表
+   *
+   * 前 7 列均为不含空白的固定字段，从左锚定；剩余部分整体作为命令行，
+   * 避免 macOS 下 args 是含空格的全路径（如 /Library/My App）时列错位。
    */
   private parseProcessList(output: string): any {
     const lines = output.split('\n').filter(line => line.trim());
     const processes: any[] = [];
 
     for (const line of lines) {
-      const fields = line.trim().split(/\s+/);
-
-      if (fields.length >= 8) {
-        const [pid, ppid, cmd, pcpu, pmem, rss, state, user, ...argsParts] = fields;
-        const command = argsParts.length > 0 ? argsParts.join(' ').trim() : cmd;
-
-        processes.push({
-          pid: this.safeParseInt(pid),
-          ppid: this.safeParseInt(ppid),
-          name: cmd,
-          comm: cmd,
-          command,
-          cpuUsage: this.safeParseNumber(pcpu),
-          memoryUsage: this.safeParseInt(rss) * 1024,
-          memoryPercentage: this.safeParseNumber(pmem),
-          state,
-          user
-        });
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s*(.*)$/);
+      if (!match) {
+        continue;
       }
+
+      const [, pid, ppid, pcpu, pmem, rss, state, user, args] = match;
+      const command = args.trim();
+      const name = command.split(/\s+/)[0] || command;
+
+      processes.push({
+        pid: this.safeParseInt(pid),
+        ppid: this.safeParseInt(ppid),
+        name,
+        comm: name,
+        command,
+        cpuUsage: this.safeParseNumber(pcpu),
+        memoryUsage: this.safeParseInt(rss) * 1024, // rss 以 KB 计，转换为字节
+        memoryPercentage: this.safeParseNumber(pmem),
+        state,
+        user
+      });
     }
 
     return processes;
@@ -793,8 +812,11 @@ export class MacOSAdapter extends BasePlatformAdapter {
       hostname: unameFields[1] || 'Unknown',
       platform: 'darwin',
       release: unameFields[2] || 'Unknown',
-      version: osVersion ? osVersion.trim() : unameFields[3] || 'Unknown',
-      arch: unameFields[4] || 'Unknown',
+      // uname -a 第 4 个字段固定为 "Darwin"，不是版本号，version 只取 sw_vers 输出
+      version: osVersion ? osVersion.trim() : 'Unknown',
+      // uname -a 第 5 个字段是 "Kernel"（"Darwin Kernel Version ..." 开头），
+      // 真实架构在输出末尾，直接用 os.arch() 更可靠
+      arch: os.arch(),
       uptime: uptimeMs,
       uptimeSeconds,
       bootTime,
@@ -821,34 +843,36 @@ export class MacOSAdapter extends BasePlatformAdapter {
 
   /**
    * 解析 df -h 输出的大小格式转换
+   *
+   * macOS df -h 会输出 Ki/Mi/Gi/Ti 及 Bi（如 0Bi、512Bi），B 或无单位时按字节处理
    */
   private convertDfSizeToBytes(sizeStr: string): number {
-    // df -h 输出的大小格式转换
-    const match = sizeStr.match(/^([\d.]+)([KMGT]?)i?$/);
+    const match = sizeStr.match(/^([\d.]+)([KMGTB]?)i?$/);
     if (!match) return 0;
 
     const value = this.safeParseNumber(match[1]);
     const unit = match[2];
 
     const multipliers: Record<string, number> = {
-      '': 1024, // df 默认单位是 KB
+      '': 1,
+      'B': 1,
       'K': 1024,
       'M': 1024 * 1024,
       'G': 1024 * 1024 * 1024,
       'T': 1024 * 1024 * 1024 * 1024
     };
 
-    return value * (multipliers[unit] || 1024);
+    return value * (multipliers[unit] || 1);
   }
 
   // 实现抽象方法，获取结构化数据
 
   /**
-   * 获取磁盘使用情况，解析 df -k 输出为磁盘使用情况
+   * 获取磁盘使用情况，解析 df -Pk 输出为磁盘使用情况（-P 保证 POSIX 单行输出）
    */
   async getDiskUsage(): Promise<any> {
     try {
-      const result = await this.executeCommand('df -k');
+      const result = await this.executeCommand('df -Pk');
       return this.parseDiskUsage(result.stdout);
     } catch (error) {
       throw this.createCommandError('getDiskUsage', error);
@@ -916,11 +940,12 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 获取进程列表，解析 ps -axo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args= 输出为进程列表
+   * 获取进程列表，解析 ps 输出（args 列位于末尾，避免含空格路径导致列错位）
    */
   async getProcessList(): Promise<any> {
     try {
-      const result = await this.executeCommand('ps -axo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args=');
+      // 进程数较多时输出可能超过默认 1MB maxBuffer，显式放宽到 10MB
+      const result = await this.executeCommand(this.processListCommand, { maxBuffer: 10 * 1024 * 1024 });
       return this.parseProcessList(result.stdout);
     } catch (error) {
       throw this.createCommandError('getProcessList', error);
@@ -1024,7 +1049,8 @@ export class MacOSAdapter extends BasePlatformAdapter {
 
     for (const line of lines) {
       const fields = line.trim().split(/\s+/);
-      if (fields.length >= 9) {
+      // df -Pk 为 POSIX 6 列格式，无 inode 列；挂载点可能含空格，取剩余列拼接
+      if (fields.length >= 6) {
         const usedPercent = fields[4].replace('%', '');
         disks.push({
           device: fields[0],
@@ -1032,7 +1058,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
           used: this.safeParseInt(fields[2]) * 1024,
           available: this.safeParseInt(fields[3]) * 1024,
           usagePercentage: this.safeParseNumber(usedPercent),
-          mountPoint: fields[8]
+          mountPoint: fields.slice(5).join(' ')
         });
       }
     }
@@ -1245,24 +1271,10 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 解析 uptime 输出为系统运行时间
-   */
-  private parseSystemUptime(output: string): any {
-    const uptimeMatch = output.match(/up\s+(.+?),/);
-    const loadMatch = output.match(/load averages:\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-
-    return {
-      uptime: uptimeMatch ? uptimeMatch[1].trim() : 'unknown',
-      loadAverage: loadMatch ? {
-        load1: this.safeParseNumber(loadMatch[1]),
-        load5: this.safeParseNumber(loadMatch[2]),
-        load15: this.safeParseNumber(loadMatch[3])
-      } : { load1: 0, load5: 0, load15: 0 }
-    };
-  }
-
-  /**
    * 解析 who 输出为系统用户
+   *
+   * 本地登录（如 console/ttys）只有 5 个字段，没有远程主机列；
+   * 仅当字段数 >= 6 时才把最后一列视为 from，避免把登录时间误当主机
    */
   private parseSystemUsers(output: string): any[] {
     const lines = output.split('\n').filter(line => line.trim());
@@ -1271,11 +1283,12 @@ export class MacOSAdapter extends BasePlatformAdapter {
     for (const line of lines) {
       const fields = line.trim().split(/\s+/);
       if (fields.length >= 5) {
+        const hasRemoteHost = fields.length >= 6;
         users.push({
           user: fields[0],
           terminal: fields[1],
-          loginTime: fields.slice(2, -1).join(' '),
-          from: fields[fields.length - 1]
+          loginTime: hasRemoteHost ? fields.slice(2, -1).join(' ') : fields.slice(2).join(' '),
+          from: hasRemoteHost ? fields[fields.length - 1] : undefined
         });
       }
     }

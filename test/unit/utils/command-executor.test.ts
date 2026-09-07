@@ -176,6 +176,52 @@ describe('CommandExecutor Unit Tests', function() {
       expect(result.exitCode).to.equal(0)
       expect(chunks.join('')).to.contain('stream output')
     })
+
+    it('超时后应终止进程并抛出 TIMEOUT 错误', async function() {
+      this.timeout(8000)
+
+      const command = process.platform === 'win32'
+        ? 'ping -n 10 127.0.0.1'
+        : 'sleep 5'
+
+      try {
+        await executor.executeStream(command, () => undefined, { timeout: 200 })
+        expect.fail('应该抛出超时错误')
+      } catch (error: any) {
+        expect(error).to.be.instanceOf(MonitorError)
+        expect(error.code).to.equal(ErrorCode.TIMEOUT)
+      }
+    })
+  })
+
+  describe('env 选项深合并', function() {
+    it('传入自定义 env 时不应丢失内置的 LC_ALL locale 设置', async function() {
+      const script = 'console.log((process.env.LC_ALL || "") + "|" + (process.env.MY_TEST_VAR || ""))'
+      const command = executor.buildCommand(process.execPath, ['-e', script])
+
+      const result = await executor.execute(command, { env: { MY_TEST_VAR: '1' } })
+
+      const [lcAll, custom] = result.stdout.trim().split('|')
+      expect(lcAll).to.equal('en_US.UTF-8')
+      expect(custom).to.equal('1')
+    })
+  })
+
+  describe('maxBuffer 溢出错误分类', function() {
+    it('输出超过 maxBuffer 时应抛出 COMMAND_FAILED 而非 TIMEOUT', async function() {
+      this.timeout(5000)
+
+      const command = executor.buildCommand(process.execPath, ['-e', 'process.stdout.write("x".repeat(200000))'])
+
+      try {
+        await executor.execute(command, { maxBuffer: 1024 })
+        expect.fail('应该抛出 maxBuffer 错误')
+      } catch (error: any) {
+        expect(error).to.be.instanceOf(MonitorError)
+        expect(error.code).to.equal(ErrorCode.COMMAND_FAILED)
+        expect(error.message).to.include('maxBuffer')
+      }
+    })
   })
 })
 

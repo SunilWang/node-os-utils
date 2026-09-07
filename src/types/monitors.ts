@@ -585,14 +585,14 @@ export interface ProcessInfo {
   memoryPercentage: Percentage;
 
   /**
-   * 启动时间
+   * 启动时间（毫秒时间戳）；适配器无法提供或解析失败时为 undefined
    */
-  startTime: number;
+  startTime?: number;
 
   /**
-   * 运行时间（毫秒）
+   * 运行时间（毫秒）；startTime 缺失无法计算时为 undefined
    */
-  runtime: number;
+  runtime?: number;
 
   /**
    * 进程优先级

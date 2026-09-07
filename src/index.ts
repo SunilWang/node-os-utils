@@ -55,8 +55,8 @@ export class OSUtils {
 
     // 创建缓存管理器
     this.cache = new CacheManager({
-      maxSize: this.config.maxCacheSize || 1000,
-      defaultTTL: this.config.cacheTTL || 5000,
+      maxSize: this.config.maxCacheSize ?? 1000,
+      defaultTTL: this.config.cacheTTL ?? 5000,
       enabled: this.config.cacheEnabled !== false
     });
 
@@ -129,7 +129,13 @@ export class OSUtils {
    * 获取平台信息
    */
   getPlatformInfo() {
-    return AdapterFactory.getCurrentPlatformInfo();
+    const platform = this.adapter.getPlatform();
+    return {
+      platform,
+      arch: process.arch,
+      version: process.version,
+      supported: AdapterFactory.isPlatformSupported(platform)
+    };
   }
 
   /**
@@ -143,7 +149,7 @@ export class OSUtils {
    * 检查平台能力
    */
   async checkPlatformCapabilities() {
-    return AdapterFactory.checkPlatformCapabilities();
+    return AdapterFactory.checkPlatformCapabilities(this.adapter.getPlatform());
   }
 
   /**
@@ -277,6 +283,18 @@ export class OSUtils {
         } else if (health.status === 'warning' && overallStatus !== 'critical') {
           overallStatus = 'warning';
         }
+      } else if (result.status === 'rejected') {
+        // Promise 被拒绝时没有 MonitorResult，统一降级为 warning 并保留原始原因。
+        overallStatus = overallStatus === 'critical' ? overallStatus : 'warning';
+        allIssues.push(result.reason instanceof Error ? result.reason.message : String(result.reason));
+      } else if (result.status === 'fulfilled' && !result.value.success) {
+        // 业务失败结果同样需要进入汇总，否则总体状态会错误地保持 healthy。
+        overallStatus = overallStatus === 'critical' ? overallStatus : 'warning';
+        allIssues.push(result.value.error.message);
+      } else if (result.status === 'fulfilled' && result.value.success && !result.value.data) {
+        // 兜底分支：结果成功但 data 为空时不能静默当作 healthy，按未知状态降级为 warning。
+        overallStatus = overallStatus === 'critical' ? overallStatus : 'warning';
+        allIssues.push('Health check succeeded but returned empty data');
       }
     });
 

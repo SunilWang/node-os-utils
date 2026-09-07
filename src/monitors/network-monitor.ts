@@ -50,7 +50,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
         const rawData = await this.adapter.getNetworkInterfaces();
         return this.transformNetworkInterfaces(rawData);
       },
-      this.networkConfig.cacheTTL || 10000
+      this.networkConfig.cacheTTL ?? 10000
     );
   }
 
@@ -97,7 +97,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
     return this.executeWithCache(
       cacheKey,
       fetchStats,
-      this.networkConfig.cacheTTL || 2000 // 统计信息缓存较短
+      this.networkConfig.cacheTTL ?? 2000 // 统计信息缓存较短
     );
   }
 
@@ -134,34 +134,45 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
       );
     }
 
-    const interval = this.networkConfig.bandwidthInterval || 1000;
+    try {
+      // 采样间隔下限 1ms，避免配置为 0 时除零产生 Infinity 导致 DataSize 抛异常
+      const interval = Math.max(1, this.networkConfig.bandwidthInterval || 1000);
 
-    // 第一次测量
-    const firstStatsResult = await this.statsAsync({ skipCache: true });
-    if (!firstStatsResult.success || !firstStatsResult.data) {
-      throw new Error('Failed to get network stats for bandwidth calculation');
+      // 第一次测量；采样失败遵守 MonitorResult 契约返回错误结果，不抛异常
+      const firstStatsResult = await this.statsAsync({ skipCache: true });
+      if (!firstStatsResult.success) {
+        return this.createErrorResult(firstStatsResult.error);
+      }
+      if (!firstStatsResult.data) {
+        return this.handleError(new Error('Failed to get network stats for bandwidth calculation'));
+      }
+
+      // 等待指定间隔
+      await new Promise(resolve => setTimeout(resolve, interval));
+
+      // 第二次测量
+      const secondStatsResult = await this.statsAsync({ skipCache: true });
+      if (!secondStatsResult.success) {
+        return this.createErrorResult(secondStatsResult.error);
+      }
+      if (!secondStatsResult.data) {
+        return this.handleError(new Error('Failed to get second network stats for bandwidth calculation'));
+      }
+
+      // 计算带宽
+      const bandwidth = this.calculateBandwidth(
+        firstStatsResult.data,
+        secondStatsResult.data,
+        interval
+      );
+
+      return this.createSuccessResult({
+        interval,
+        interfaces: bandwidth
+      });
+    } catch (error) {
+      return this.handleError(error);
     }
-
-    // 等待指定间隔
-    await new Promise(resolve => setTimeout(resolve, interval));
-
-    // 第二次测量
-    const secondStatsResult = await this.statsAsync({ skipCache: true });
-    if (!secondStatsResult.success || !secondStatsResult.data) {
-      throw new Error('Failed to get second network stats for bandwidth calculation');
-    }
-
-    // 计算带宽
-    const bandwidth = this.calculateBandwidth(
-      firstStatsResult.data,
-      secondStatsResult.data,
-      interval
-    );
-
-    return this.createSuccessResult({
-      interval,
-      interfaces: bandwidth
-    });
   }
 
   /**
@@ -184,7 +195,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
         const rawData = await this.adapter.getNetworkConnections();
         return this.transformNetworkConnections(rawData);
       },
-      this.networkConfig.cacheTTL || 5000
+      this.networkConfig.cacheTTL ?? 5000
     );
   }
 
@@ -205,7 +216,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
         const rawData = await this.adapter.getDefaultGateway();
         return this.transformGatewayInfo(rawData);
       },
-      this.networkConfig.cacheTTL || 30000
+      this.networkConfig.cacheTTL ?? 30000
     );
   }
 
@@ -227,7 +238,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
           ipv6: undefined
         };
       },
-      this.networkConfig.cacheTTL || 300000 // 公网 IP 缓存 5 分钟
+      this.networkConfig.cacheTTL ?? 300000 // 公网 IP 缓存 5 分钟
     );
   }
 
@@ -317,7 +328,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
           checks
         };
       },
-      this.networkConfig.cacheTTL || 30000
+      this.networkConfig.cacheTTL ?? 30000
     );
   }
 
@@ -374,7 +385,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
           totalErrors
         };
       },
-      this.networkConfig.cacheTTL || 10000
+      this.networkConfig.cacheTTL ?? 10000
     );
   }
 
@@ -700,15 +711,16 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
 
   /**
    * 安全解析数字
+   * 流量字节数/包计数语义上不为负，负数统一钳制为 0，避免后续 DataSize 构造抛异常
    */
   private safeParseNumber(value: any): number {
     if (typeof value === 'number') {
-      return isNaN(value) ? 0 : value;
+      return isNaN(value) ? 0 : Math.max(0, value);
     }
 
     if (typeof value === 'string') {
       const parsed = parseFloat(value);
-      return isNaN(parsed) ? 0 : parsed;
+      return isNaN(parsed) ? 0 : Math.max(0, parsed);
     }
 
     return 0;
@@ -718,10 +730,24 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
 
   /**
    * 获取网络流量统计（同步版本，向后兼容）
-   * @param interval 监控间隔（毫秒）
-   * @returns 网络流量统计对象或 'not supported'
+   * Get network traffic statistics (sync, for backward compatibility)
+   *
+   * @deprecated
+   * 此方法固定返回全 0 的流量数据，无法反映真实网络流量。
+   * This method always returns all-zero traffic values,
+   * and cannot reflect real network traffic.
+   *
+   * 请迁移到异步方法 / Please migrate to the async API:
+   * ```ts
+   * const result = await osUtils.network.bandwidth();
+   * if (result.success) console.log(result.data); // 实时上下行速率 / real-time upload & download rates
+   * ```
+   * 此方法将在未来版本中移除。/ This method will be removed in a future release.
+   *
+   * @param _interval 监控间隔（毫秒），参数保留仅为 API 兼容，不参与计算
+   * @returns 网络流量统计对象（固定占位值）或 'not supported'
    */
-  inOut(interval: number = 1000): any {
+  inOut(_interval: number = 1000): any {
     try {
       // 对于同步版本，无法进行实际的网络监控
       // 返回基本结构，实际值需要通过异步方法获取
@@ -740,7 +766,21 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
 
   /**
    * 获取网络统计信息（同步版本，向后兼容）
-   * @returns 网络统计信息数组或 'not supported'
+   * Get network statistics (sync, for backward compatibility)
+   *
+   * @deprecated
+   * 此方法返回的流量计数器（rx_bytes、tx_bytes 等）固定为 0，仅接口名称与地址为真实数据。
+   * This method returns all-zero traffic counters (rx_bytes, tx_bytes, etc.);
+   * only the interface name and address are real.
+   *
+   * 请迁移到异步方法 / Please migrate to the async API:
+   * ```ts
+   * const result = await osUtils.network.statsAsync();
+   * if (result.success) console.log(result.data); // 各接口真实流量计数 / real per-interface traffic counters
+   * ```
+   * 此方法将在未来版本中移除。/ This method will be removed in a future release.
+   *
+   * @returns 网络统计信息数组（流量计数为固定占位值）或 'not supported'
    */
   stats(): any {
     try {

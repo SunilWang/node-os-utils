@@ -146,3 +146,212 @@ describe('SystemMonitor uptime() 单位归一化（issue #47 回归）', () => {
     }
   });
 });
+
+describe('SystemMonitor 健康检查', () => {
+  it('应将返回失败结果的负载和运行时间检查计为 warning', async () => {
+    const adapter = {
+      getPlatform: () => 'linux',
+      isSupported: () => true,
+      getSystemLoad: async () => { throw new Error('load unavailable'); },
+      getSystemUptime: async () => { throw new Error('uptime unavailable'); },
+      getCPUInfo: async () => ({ cores: 4 })
+    } as any;
+
+    const result = await new SystemMonitor(adapter).healthCheck();
+
+    expect(result.success).to.equal(true);
+    if (result.success) {
+      expect(result.data.status).to.equal('warning');
+      expect(result.data.checks.load).to.equal(false);
+      expect(result.data.checks.uptime).to.equal(false);
+      expect(result.data.issues.join(' ')).to.include('load unavailable');
+      expect(result.data.issues.join(' ')).to.include('uptime unavailable');
+    }
+  });
+});
+
+describe('SystemMonitor overview() 资源聚合', () => {
+  function createOverviewAdapter(overrides: Record<string, any> = {}) {
+    return Object.assign({
+      getPlatform: () => 'linux',
+      isSupported: () => true,
+      getSystemInfo: async () => ({
+        hostname: 'test-host',
+        platform: 'linux',
+        uptimeSeconds: 600,
+        processCount: 120
+      }),
+      getSystemUptime: async () => ({ uptimeSeconds: 600 }),
+      getSystemLoad: async () => ({ load1: 0.5, load5: 0.4, load15: 0.3 }),
+      getCPUInfo: async () => ({ cores: 4 }),
+      getCPUUsage: async () => ({ overall: 42 }),
+      getMemoryInfo: async () => ({ total: 1000, used: 500 }),
+      getDiskUsage: async () => ([{ usagePercentage: 60 }, { usePercent: 80 }]),
+      getNetworkStats: async () => ([{ interface: 'eth0', rxBytes: 100, txBytes: 200 }]),
+      getSystemUsers: async () => { throw new Error('users unavailable'); }
+    }, overrides) as any;
+  }
+
+  it('正常聚合路径应汇总各资源使用率', async () => {
+    const monitor = new SystemMonitor(createOverviewAdapter());
+
+    const result = await monitor.overview();
+
+    expect(result.success).to.be.true;
+    if (result.success) {
+      expect(result.data.system.hostname).to.equal('test-host');
+      expect(result.data.system.loadStatus).to.equal('low');
+      expect(result.data.resources.cpuUsage).to.equal(42);
+      expect(result.data.resources.memoryUsage).to.equal(50);
+      // diskUsage 取所有磁盘百分比的最大值，兼容 usagePercentage/usePercent 两种字段
+      expect(result.data.resources.diskUsage).to.equal(80);
+      // 首次采样无网络基线，应视为无活动
+      expect(result.data.resources.networkActivity).to.be.false;
+      expect(result.data.counts.processes).to.equal(120);
+      // 用户信息默认未启用，应降级为 0
+      expect(result.data.counts.users).to.equal(0);
+    }
+  });
+
+  it('部分监控器失败时仍应返回成功结果并降级对应指标', async () => {
+    const monitor = new SystemMonitor(createOverviewAdapter({
+      getCPUUsage: async () => { throw new Error('cpu fail'); },
+      getDiskUsage: async () => { throw new Error('disk fail'); }
+    }));
+
+    const result = await monitor.overview();
+
+    expect(result.success).to.be.true;
+    if (result.success) {
+      expect(result.data.resources.cpuUsage).to.equal(0);
+      expect(result.data.resources.diskUsage).to.equal(0);
+      // 未受影响的指标仍应正常聚合
+      expect(result.data.resources.memoryUsage).to.equal(50);
+      expect(result.data.system.hostname).to.equal('test-host');
+    }
+  });
+});
+
+describe('SystemMonitor detectNetworkActivity()', () => {
+  // 共享同一实例，利用 previousNetworkCounters 在多次调用间累积基线
+  const monitor = new SystemMonitor({ getPlatform: () => 'linux' } as any);
+  const detect = (stats: any[]) => (monitor as any).detectNetworkActivity(stats);
+
+  it('首次采样无基线时应视为无活动', () => {
+    expect(detect([{ interface: 'eth0', rxBytes: 100, txBytes: 100 }])).to.be.false;
+  });
+
+  it('计数器增长时应检测为活跃', () => {
+    expect(detect([{ interface: 'eth0', rxBytes: 200, txBytes: 100 }])).to.be.true;
+  });
+
+  it('计数器回退（如接口重置）时应视为无活动', () => {
+    expect(detect([{ interface: 'eth0', rxBytes: 50, txBytes: 50 }])).to.be.false;
+  });
+
+  it('计数器持平不变时应视为无活动', () => {
+    expect(detect([{ interface: 'eth0', rxBytes: 50, txBytes: 50 }])).to.be.false;
+  });
+});
+
+describe('SystemMonitor parseLoginTime()', () => {
+  const monitor = new SystemMonitor({ getPlatform: () => 'linux' } as any);
+
+  it('无法解析的登录时间应返回 undefined 而不是当前时间', () => {
+    const users = (monitor as any).transformUsersList([
+      { username: 'a', loginTime: 'not-a-date' },
+      { username: 'b' }
+    ]);
+
+    expect(users[0].loginTime).to.be.undefined;
+    expect(users[1].loginTime).to.be.undefined;
+  });
+
+  it('合法登录时间应正常解析', () => {
+    const users = (monitor as any).transformUsersList([
+      { username: 'a', loginTime: 1700000000 },          // 秒时间戳
+      { username: 'b', loginTime: 1700000000000 },       // 毫秒时间戳
+      { username: 'c', loginTime: '2026-09-01T00:00:00Z' } // 可解析字符串
+    ]);
+
+    expect(users[0].loginTime).to.equal(1700000000 * 1000);
+    expect(users[1].loginTime).to.equal(1700000000000);
+    expect(users[2].loginTime).to.equal(Date.parse('2026-09-01T00:00:00Z'));
+  });
+});
+
+describe('SystemMonitor healthCheck() resources 检查', () => {
+  function createHealthAdapter(overrides: Record<string, any> = {}) {
+    return Object.assign({
+      getPlatform: () => 'linux',
+      isSupported: () => true,
+      getSystemInfo: async () => ({ hostname: 'test-host', platform: 'linux', uptimeSeconds: 86400 }),
+      // 运行时间超过 1 小时、负载低，避免其他检查项干扰 resources 断言
+      getSystemUptime: async () => ({ uptimeSeconds: 86400 }),
+      getSystemLoad: async () => ({ load1: 0.1, load5: 0.1, load15: 0.1 }),
+      getCPUInfo: async () => ({ cores: 4 }),
+      getCPUUsage: async () => ({ overall: 30 }),
+      getMemoryInfo: async () => ({ total: 1000, used: 400 }),
+      getDiskUsage: async () => ([{ usagePercentage: 60 }]),
+      getNetworkStats: async () => ([])
+    }, overrides) as any;
+  }
+
+  it('CPU 使用率 >= 90% 时 resources 应置 false 并记入 issues', async () => {
+    const monitor = new SystemMonitor(createHealthAdapter({
+      getCPUUsage: async () => ({ overall: 95 })
+    }));
+
+    const result = await monitor.healthCheck();
+
+    expect(result.success).to.be.true;
+    if (result.success) {
+      expect(result.data.checks.resources).to.be.false;
+      expect(result.data.issues.join(' ')).to.include('High CPU usage: 95.0%');
+      expect(result.data.status).to.equal('warning');
+    }
+  });
+
+  it('内存或最差磁盘分区 >= 90% 时 resources 应置 false', async () => {
+    const monitor = new SystemMonitor(createHealthAdapter({
+      getMemoryInfo: async () => ({ total: 1000, used: 950 }),
+      getDiskUsage: async () => ([{ usagePercentage: 40 }, { usagePercentage: 92 }])
+    }));
+
+    const result = await monitor.healthCheck();
+
+    expect(result.success).to.be.true;
+    if (result.success) {
+      expect(result.data.checks.resources).to.be.false;
+      expect(result.data.issues.join(' ')).to.include('High memory usage: 95.0%');
+      expect(result.data.issues.join(' ')).to.include('High disk usage: 92.0%');
+    }
+  });
+
+  it('资源使用率均低于阈值时 resources 应保持 true', async () => {
+    const monitor = new SystemMonitor(createHealthAdapter());
+
+    const result = await monitor.healthCheck();
+
+    expect(result.success).to.be.true;
+    if (result.success) {
+      expect(result.data.checks.resources).to.be.true;
+      expect(result.data.status).to.equal('healthy');
+    }
+  });
+
+  it('资源数据全部不可用时保守视为正常', async () => {
+    const monitor = new SystemMonitor(createHealthAdapter({
+      getCPUUsage: async () => { throw new Error('cpu unavailable'); },
+      getMemoryInfo: async () => { throw new Error('memory unavailable'); },
+      getDiskUsage: async () => { throw new Error('disk unavailable'); }
+    }));
+
+    const result = await monitor.healthCheck();
+
+    expect(result.success).to.be.true;
+    if (result.success) {
+      expect(result.data.checks.resources).to.be.true;
+    }
+  });
+});

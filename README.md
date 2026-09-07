@@ -161,6 +161,7 @@ const osutils = new OSUtils({
   maxCacheSize: 1000,
 
   // Execution settings
+  // Timeout (ms), applies to both monitor operations and underlying system commands
   timeout: 10000,
 
   // Debug mode
@@ -610,6 +611,8 @@ if (users.success) {
 | `time()` | `Promise<MonitorResult<{ current: number; timezone: string; utcOffset: number; formatted: string; bootTime?: number }>>` | Current system time metadata | ✅ All |
 | `healthCheck()` | `Promise<MonitorResult<{ status: 'healthy' | 'warning' | 'critical'; checks: Record<string, boolean>; issues: string[]; score: number }>>` | System health overview | ⚠️ Limited |
 
+`overview().resources.networkActivity` indicates whether interface byte counters increased since the previous uncached overview sample. The first sample, a counter reset, or unavailable network statistics returns `false`.
+
 ## 🌍 Platform Compatibility
 
 ### Supported Platforms
@@ -674,7 +677,7 @@ if (overview.processes) {
   console.log('Processes:', overview.processes.total);
 }
 if (overview.system?.uptime != null) {
-  console.log('Uptime:', (overview.system.uptime / 3600).toFixed(1) + ' hours');
+  console.log('Uptime:', (overview.system.uptime / 3600000).toFixed(1) + ' hours');
 }
 
 // System health check
@@ -997,6 +1000,8 @@ if (memResult.success) {
 | `osu.drive.info()` | `osutils.disk.info()` |
 | `osu.netstat.inOut()` | `osutils.network.overview()` |
 | `osu.proc.totalProcesses()` | `osutils.process.list().then(r => r.data.length)` |
+
+> **Deprecated legacy sync methods**: The backward-compatible synchronous methods `disk.free()` / `disk.used()` / `network.inOut()` / `network.stats()` only return fixed placeholder values (all zeros) and are marked `@deprecated`. Migrate to the async APIs `disk.usage()`, `network.bandwidth()` and `network.statsAsync()` for real data. They will be removed in a future release.
 
 ### Migration Example
 

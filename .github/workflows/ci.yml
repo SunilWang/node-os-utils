@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main, develop]
+    tags: ['v*']
+  pull_request:
+    branches: [master, main, develop]
+
+env:
+  NODE_ENV: test
+
+# 同一分支/PR 的新提交触发时，取消正在运行的旧工作流，节省 CI 资源
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Node.js ${{ matrix.node-version }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      # 单个矩阵组合失败不取消其余组合，保留完整的跨平台结果
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: ['18', '20', '22']
+        # 每个操作系统对应的项目内平台测试脚本，
+        # 避免在 Windows pwsh/cmd 下执行 test:current-platform 的内联 node -e 引号转义问题
+        include:
+          - os: ubuntu-latest
+            platform-test-script: test:linux
+          - os: windows-latest
+            platform-test-script: test:windows
+          - os: macos-latest
+            platform-test-script: test:macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Display versions
+        run: |
+          node --version
+          npm --version
+          npx tsc --version
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint:check
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run platform-specific tests
+        run: npm run ${{ matrix.platform-test-script }}
+
+      # 覆盖率非阻断，仅在 ubuntu + Node 22 组合上运行一次（对应 Travis 的 after_success || true）
+      - name: Coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '22'
+        run: npm run test:coverage
+        continue-on-error: true

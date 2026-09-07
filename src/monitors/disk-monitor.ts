@@ -43,7 +43,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
         const rawData = await this.adapter.getDiskInfo();
         return this.transformDiskInfo(rawData);
       },
-      this.diskConfig.cacheTTL || 30000 // 磁盘信息缓存 30 秒
+      this.diskConfig.cacheTTL ?? 30000 // 磁盘信息缓存 30 秒
     );
   }
 
@@ -78,7 +78,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
         const rawData = await this.adapter.getDiskUsage();
         return this.transformDiskUsage(rawData);
       },
-      this.diskConfig.cacheTTL || 10000
+      this.diskConfig.cacheTTL ?? 10000
     );
   }
 
@@ -144,7 +144,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
         const rawData = await this.adapter.getDiskStats();
         return this.transformDiskStats(rawData);
       },
-      this.diskConfig.cacheTTL || 5000
+      this.diskConfig.cacheTTL ?? 5000
     );
   }
 
@@ -162,7 +162,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
         const rawData = await this.adapter.getMounts();
         return this.transformMountPoints(rawData);
       },
-      this.diskConfig.cacheTTL || 30000
+      this.diskConfig.cacheTTL ?? 30000
     );
   }
 
@@ -180,7 +180,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
         const rawData = await this.adapter.getFileSystems();
         return this.transformFileSystems(rawData);
       },
-      this.diskConfig.cacheTTL || 60000 // 文件系统信息变化较少
+      this.diskConfig.cacheTTL ?? 60000 // 文件系统信息变化较少
     );
   }
 
@@ -230,7 +230,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
           disks: usageResult.data.length
         };
       },
-      this.diskConfig.cacheTTL || 15000
+      this.diskConfig.cacheTTL ?? 15000
     );
   }
 
@@ -294,6 +294,19 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
           checks.mountStatus = false;
         }
 
+        // 检查磁盘 I/O 错误
+        try {
+          const ioCheck = await this.checkIOErrors();
+          if (ioCheck.checked && ioCheck.hasErrors) {
+            issues.push(...ioCheck.issues);
+            checks.ioErrors = false;
+          }
+          // ioCheck.checked 为 false 表示无可用数据源，保守跳过检查（保持 true）
+        } catch (error) {
+          issues.push('Failed to check disk I/O errors');
+          checks.ioErrors = false;
+        }
+
         // 确定整体健康状态
         let status: 'healthy' | 'warning' | 'critical' = 'healthy';
 
@@ -309,7 +322,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
           checks
         };
       },
-      this.diskConfig.cacheTTL || 30000
+      this.diskConfig.cacheTTL ?? 30000
     );
   }
 
@@ -488,6 +501,7 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
 
   /**
    * 计算使用率百分比
+   * 结果钳制在 [0, 100]，避免脏数据（如 used > total）产生超出语义的百分比
    */
   private calculateUsagePercentage(disk: any): number {
     const total = this.safeParseNumber(disk.total || disk.size);
@@ -497,7 +511,86 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
       return 0;
     }
 
-    return Math.round((used / total) * 10000) / 100; // 保留两位小数
+    const percentage = Math.round((used / total) * 10000) / 100; // 保留两位小数
+    return Math.min(100, Math.max(0, percentage));
+  }
+
+  /**
+   * 检查磁盘 I/O 错误（best-effort，宁保守勿误报）
+   *
+   * 数据源 1（仅 Linux）：累加 /sys/block/<device>/device/ioerr_cnt，>0 判定存在 I/O 错误；
+   * 数据源 2（跨平台）：对已挂载文件系统做可访问性检查，不可访问的挂载点判定为 I/O 异常。
+   * @returns 检查结果；checked=false 表示两个数据源均不可用，调用方应保守跳过
+   */
+  private async checkIOErrors(): Promise<{ hasErrors: boolean; checked: boolean; issues: string[] }> {
+    const issues: string[] = [];
+    let checked = false;
+    let hasErrors = false;
+
+    // 数据源 1：Linux sysfs 的 ioerr_cnt 计数器（macOS/Windows 无 /sys，自动跳过）
+    if (process.platform === 'linux') {
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const sysBlockDir = '/sys/block';
+        const devices: string[] = fs.readdirSync(sysBlockDir);
+        let readableCounters = 0;
+        let totalErrors = 0;
+
+        for (const device of devices) {
+          const counterPath = path.join(sysBlockDir, device, 'device', 'ioerr_cnt');
+          try {
+            const content = fs.readFileSync(counterPath, 'utf8').trim();
+            const count = parseInt(content, 10);
+            if (!Number.isNaN(count)) {
+              readableCounters += 1;
+              totalErrors += count;
+            }
+          } catch {
+            // 单个设备无 ioerr_cnt（如虚拟设备），跳过
+          }
+        }
+
+        if (readableCounters > 0) {
+          checked = true;
+          if (totalErrors > 0) {
+            hasErrors = true;
+            issues.push(`Disk I/O errors detected (ioerr_cnt total: ${totalErrors})`);
+          }
+        }
+      } catch {
+        // /sys/block 不可用（如容器环境），继续尝试挂载点检查
+      }
+    }
+
+    // 数据源 2：挂载点可访问性检查（mounts() 走缓存，不会重复发起系统调用）
+    try {
+      const mountsResult = await this.mounts();
+      if (mountsResult.success && mountsResult.data && mountsResult.data.length > 0) {
+        const fs = require('fs');
+        checked = true;
+
+        for (const mount of mountsResult.data) {
+          // 跳过配置排除的伪文件系统（proc/sysfs 等），避免误报
+          if (this.diskConfig.excludeTypes &&
+              this.diskConfig.excludeTypes.includes(mount.filesystem)) {
+            continue;
+          }
+
+          try {
+            // 仅做存在性检查（F_OK）：权限受限但挂载正常的目录不算 I/O 异常
+            fs.accessSync(mount.mountpoint, fs.constants.F_OK);
+          } catch {
+            hasErrors = true;
+            issues.push(`Mount point not accessible: ${mount.mountpoint}`);
+          }
+        }
+      }
+    } catch {
+      // 挂载点信息不可用，跳过该数据源
+    }
+
+    return { hasErrors, checked, issues };
   }
 
   /**
@@ -540,15 +633,16 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
 
   /**
    * 安全解析数字
+   * 磁盘字节数/计数语义上不为负，负数统一钳制为 0，避免后续 DataSize 构造抛异常
    */
   private safeParseNumber(value: any): number {
     if (typeof value === 'number') {
-      return isNaN(value) ? 0 : value;
+      return isNaN(value) ? 0 : Math.max(0, value);
     }
 
     if (typeof value === 'string') {
       const parsed = parseFloat(value);
-      return isNaN(parsed) ? 0 : parsed;
+      return isNaN(parsed) ? 0 : Math.max(0, parsed);
     }
 
     return 0;
@@ -558,10 +652,24 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
 
   /**
    * 获取指定路径的空闲磁盘空间（同步版本，向后兼容）
-   * @param path 路径（默认为根目录）
-   * @returns 空闲磁盘空间对象或 'not supported'
+   * Get free disk space for a path (sync, for backward compatibility)
+   *
+   * @deprecated
+   * 此方法固定返回全 0 的占位对象，无法反映真实磁盘空间。
+   * This method always returns a placeholder object with all-zero values,
+   * and cannot reflect real disk space.
+   *
+   * 请迁移到异步方法 / Please migrate to the async API:
+   * ```ts
+   * const result = await osUtils.disk.usage();
+   * if (result.success) console.log(result.data); // 各挂载点的可用空间 / available space per mount point
+   * ```
+   * 此方法将在未来版本中移除。/ This method will be removed in a future release.
+   *
+   * @param _path 路径（默认为根目录），参数保留仅为 API 兼容，不参与计算
+   * @returns 空闲磁盘空间对象（固定占位值）或 'not supported'
    */
-  free(path: string = '/'): any {
+  free(_path: string = '/'): any {
     try {
       // 对于同步版本，我们无法调用异步的适配器方法
       // 这里返回一个基本的结构，实际值需要通过异步方法获取
@@ -577,10 +685,24 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
 
   /**
    * 获取指定路径的已用磁盘空间（同步版本，向后兼容）
-   * @param path 路径（默认为根目录）
-   * @returns 已用磁盘空间对象或 'not supported'
+   * Get used disk space for a path (sync, for backward compatibility)
+   *
+   * @deprecated
+   * 此方法固定返回全 0 的占位对象，无法反映真实磁盘空间。
+   * This method always returns a placeholder object with all-zero values,
+   * and cannot reflect real disk space.
+   *
+   * 请迁移到异步方法 / Please migrate to the async API:
+   * ```ts
+   * const result = await osUtils.disk.usage();
+   * if (result.success) console.log(result.data); // 各挂载点的已用空间 / used space per mount point
+   * ```
+   * 此方法将在未来版本中移除。/ This method will be removed in a future release.
+   *
+   * @param _path 路径（默认为根目录），参数保留仅为 API 兼容，不参与计算
+   * @returns 已用磁盘空间对象（固定占位值）或 'not supported'
    */
-  used(path: string = '/'): any {
+  used(_path: string = '/'): any {
     try {
       // 对于同步版本，我们无法调用异步的适配器方法
       // 这里返回一个基本的结构，实际值需要通过异步方法获取

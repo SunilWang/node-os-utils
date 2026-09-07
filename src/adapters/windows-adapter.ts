@@ -260,9 +260,36 @@ export class WindowsAdapter extends BasePlatformAdapter {
     }));
   }
 
-  /** 获取网络接口 */
+  /**
+   * 获取网络接口
+   *
+   * 将 os.networkInterfaces() 的对象 map 归一化为与 Linux/macOS 适配器一致的数组结构。
+   * Node.js os 模块不提供链路状态与 MTU：有地址即视为 up，mtu 置 0（监控层会回退默认值）。
+   */
   async getNetworkInterfaces(): Promise<any> {
-    return os.networkInterfaces();
+    const interfaces = os.networkInterfaces();
+    const result: any[] = [];
+
+    for (const [name, addrs] of Object.entries(interfaces)) {
+      const addressList = addrs ?? [];
+      result.push({
+        name,
+        addresses: addressList.map(addr => ({
+          address: addr.address,
+          netmask: addr.netmask,
+          family: addr.family,
+          internal: addr.internal,
+          // scopeid 仅存在于 IPv6 地址上，用可选属性访问兼容两种变体
+          scopeid: (addr as { scopeid?: number }).scopeid
+        })),
+        mac: addressList[0]?.mac || '',
+        state: addressList.length > 0 ? 'up' : 'down',
+        mtu: 0,
+        internal: addressList.length > 0 && addressList.every(addr => addr.internal)
+      });
+    }
+
+    return result;
   }
 
   /** 获取网络统计 */
@@ -395,13 +422,13 @@ export class WindowsAdapter extends BasePlatformAdapter {
     }
   }
 
-  /** 获取进程打开文件 */
-  async getProcessOpenFiles(): Promise<string[]> {
+  /** 获取进程打开文件（当前平台未实现，pid 参数仅为满足基类契约） */
+  async getProcessOpenFiles(_pid: number): Promise<string[]> {
     throw this.createUnsupportedError('process.openFiles');
   }
 
-  /** 获取进程环境变量 */
-  async getProcessEnvironment(): Promise<Record<string, string>> {
+  /** 获取进程环境变量（当前平台未实现，pid 参数仅为满足基类契约） */
+  async getProcessEnvironment(_pid: number): Promise<Record<string, string>> {
     throw this.createUnsupportedError('process.environment');
   }
 
@@ -600,11 +627,15 @@ export class WindowsAdapter extends BasePlatformAdapter {
   /**
    * 执行 PowerShell 命令并转换 JSON
    *
+   * 统一在脚本前设置控制台输出编码为 UTF-8：PS 5.1 默认按 OEM 代码页输出
+   * （中文系统为 GBK），exec 按 UTF-8 解码会导致中文乱码。
+   *
    * @param command PowerShell 脚本片段
    * @param options 执行选项，例如超时与缓冲区
    */
   private async executePowerShell(command: string, options: ExecuteOptions = {}): Promise<any> {
-    const fullCommand = this.executor.buildCommand('powershell', ['-NoProfile', '-Command', command]);
+    const utf8Command = `[Console]::OutputEncoding=[Text.Encoding]::UTF8; ${command}`;
+    const fullCommand = this.executor.buildCommand('powershell', ['-NoProfile', '-Command', utf8Command]);
     const result = await this.executeCommand(fullCommand, options);
 
     if (result.exitCode !== 0) {
@@ -647,26 +678,53 @@ export class WindowsAdapter extends BasePlatformAdapter {
 
   /**
    * 将 WMI/CIM 返回的日期字符串解析为 UTC 时间戳
+   *
+   * CreationDate 来自 ConvertTo-Json，实际格式取决于 PowerShell 版本：
+   * PS 5.1 序列化为 \/Date(毫秒)\/，PS 7 输出 ISO 8601，wmic 等旧接口为 DMTF。
+   * 全部无法识别时返回 0，不用 Date.now() 冒充启动时间。
    */
   private parseWmiDate(value?: string): number {
     if (!value) {
-      return Date.now();
+      return 0;
     }
 
-    const match = value.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/);
+    // PowerShell 5.1：\/Date(1704110400000)\/，时间戳本身已是 UTC 毫秒
+    const jsonDateMatch = value.match(/\\\/Date\((\d+)\)\\\//);
+    if (jsonDateMatch) {
+      return Number(jsonDateMatch[1]);
+    }
+
+    // PowerShell 7：ISO 8601 字符串（含 '-'，如 2024-01-01T12:00:00+08:00）
+    if (value.includes('-')) {
+      const parsed = Date.parse(value);
+      if (!Number.isNaN(parsed)) {
+        return parsed;
+      }
+    }
+
+    // DMTF 日期末尾的 ±UUU 表示相对 UTC 的分钟偏移；忽略该偏移会造成跨时区启动时间错误。
+    const match = value.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\.(\d{1,6}))?([+-]\d{3}|\*{4})?/);
     if (!match) {
-      return Date.now();
+      return 0;
     }
 
-    const [ , year, month, day, hour, minute, second ] = match;
-    return Date.UTC(
+    const [ , year, month, day, hour, minute, second, fraction, offset ] = match;
+    const milliseconds = fraction ? Number(fraction.slice(0, 3).padEnd(3, '0')) : 0;
+    const utcWithoutOffset = Date.UTC(
       Number(year),
       Number(month) - 1,
       Number(day),
       Number(hour),
       Number(minute),
-      Number(second)
+      Number(second),
+      milliseconds
     );
+    if (offset && /^[+-]\d{3}$/.test(offset)) {
+      // DMTF 的日期部分是本地时间，减去正偏移或加上负偏移后才得到 UTC。
+      const offsetMinutes = Number(offset.slice(1));
+      return utcWithoutOffset - (offset[0] === '+' ? offsetMinutes : -offsetMinutes) * 60 * 1000;
+    }
+    return utcWithoutOffset;
   }
 
   /**

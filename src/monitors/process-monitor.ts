@@ -42,8 +42,11 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
    * 获取所有进程列表
    */
   async list(options: { skipLimit?: boolean } = {}): Promise<MonitorResult<ProcessInfo[]>> {
-    const limitKey = options.skipLimit ? 'all' : (this.processConfig.maxResults || 'all');
-    const cacheKey = `process-list-${limitKey}`;
+    // 过滤条件属于查询语义的一部分，必须纳入缓存键，避免不同配置复用同一份列表。
+    const limitKey = options.skipLimit ? 'all' : (this.processConfig.maxResults ?? 'all');
+    const pidKey = this.processConfig.pids?.slice().sort((a, b) => a - b).join(',') || 'all';
+    const filterKey = encodeURIComponent(this.processConfig.nameFilter || 'all');
+    const cacheKey = `process-list-${limitKey}-${pidKey}-${filterKey}`;
 
     return this.executeWithCache(
       cacheKey,
@@ -58,7 +61,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
 
         return filteredProcesses;
       },
-      this.processConfig.cacheTTL || 5000
+      this.processConfig.cacheTTL ?? 5000
     );
   }
 
@@ -88,7 +91,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
 
         return this.transformProcessInfo(rawData);
       },
-      this.processConfig.cacheTTL || 2000
+      this.processConfig.cacheTTL ?? 2000
     );
   }
 
@@ -258,7 +261,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
 
         return stats;
       },
-      this.processConfig.cacheTTL || 5000
+      this.processConfig.cacheTTL ?? 5000
     );
   }
 
@@ -323,7 +326,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
         const rawData = await this.adapter.getProcessOpenFiles(pid);
         return rawData || [];
       },
-      this.processConfig.cacheTTL || 10000
+      this.processConfig.cacheTTL ?? 10000
     );
   }
 
@@ -354,7 +357,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
         const rawData = await this.adapter.getProcessEnvironment(pid);
         return rawData || {};
       },
-      this.processConfig.cacheTTL || 30000
+      this.processConfig.cacheTTL ?? 30000
     );
   }
 
@@ -451,8 +454,10 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
    */
   private transformProcessInfo(rawProcess: any): ProcessInfo {
     const startTime = this.parseStartTime(rawProcess.startTime || rawProcess.start_time);
-    const currentTime = Date.now();
-    const runtime = currentTime - startTime;
+    // startTime 缺失时无法计算运行时间，置为 undefined 降级，避免产生 NaN 传播
+    const runtime = startTime !== undefined
+      ? Math.max(0, Date.now() - startTime)
+      : undefined;
 
     return {
       pid: this.safeParseNumber(rawProcess.pid),
@@ -521,21 +526,26 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
       childrenMap.get(process.ppid)!.push(process);
     }
 
-    // 递归构建树
-    const buildNode = (pid: ProcessId): any => {
+    // 递归构建树；visited 记录当前路径上已访问的 pid，用于打破 ppid 环形引用
+    const buildNode = (pid: ProcessId, visited: Set<ProcessId>): any => {
       const process = processMap.get(pid);
-      if (!process) return null;
+      // 已访问节点说明存在环（如父子互为 ppid），直接断开以避免无限递归
+      if (!process || visited.has(pid)) return null;
+
+      // 每个分支使用独立的 visited 副本，避免兄弟分支之间互相误伤
+      const branchVisited = new Set(visited);
+      branchVisited.add(pid);
 
       const children = childrenMap.get(pid) || [];
 
       return {
         ...process,
-        children: children.map(child => buildNode(child.pid)).filter(child => child !== null)
+        children: children.map(child => buildNode(child.pid, branchVisited)).filter(child => child !== null)
       };
     };
 
     if (rootPid !== undefined) {
-      return buildNode(rootPid);
+      return buildNode(rootPid, new Set());
     }
 
     // 返回所有根进程（ppid 不在进程列表中的进程）
@@ -543,7 +553,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
 
     for (const process of processes) {
       if (!processMap.has(process.ppid)) {
-        rootProcesses.push(buildNode(process.pid));
+        rootProcesses.push(buildNode(process.pid, new Set()));
       }
     }
 
@@ -590,9 +600,11 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
 
   /**
    * 解析启动时间
+   * @param startTime 适配器返回的原始启动时间（秒/毫秒时间戳或可解析字符串）
+   * @returns 毫秒时间戳；无法解析时返回 undefined，不再用当前时间冒充启动时间
    */
-  private parseStartTime(startTime: any): number {
-    if (typeof startTime === 'number') {
+  private parseStartTime(startTime: any): number | undefined {
+    if (typeof startTime === 'number' && Number.isFinite(startTime)) {
       // 如果是时间戳
       if (startTime > 1000000000000) {
         // 毫秒时间戳
@@ -610,21 +622,22 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
       }
     }
 
-    // 默认返回当前时间
-    return Date.now();
+    // 解析失败返回 undefined，由消费方做降级处理
+    return undefined;
   }
 
   /**
    * 安全解析数字
+   * 字节数/计数语义上不为负，负数统一钳制为 0，避免后续 DataSize 构造抛异常
    */
   private safeParseNumber(value: any): number {
     if (typeof value === 'number') {
-      return isNaN(value) ? 0 : value;
+      return isNaN(value) ? 0 : Math.max(0, value);
     }
 
     if (typeof value === 'string') {
       const parsed = parseFloat(value);
-      return isNaN(parsed) ? 0 : parsed;
+      return isNaN(parsed) ? 0 : Math.max(0, parsed);
     }
 
     return 0;

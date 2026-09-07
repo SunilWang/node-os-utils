@@ -1,6 +1,6 @@
 {
   "name": "node-os-utils",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "description": "Advanced cross-platform operating system monitoring utilities with TypeScript support",
   "type": "commonjs",
   "main": "dist/src/index.js",
@@ -85,18 +85,17 @@
     "processes"
   ],
   "devDependencies": {
-    "typescript": "~5.4.0",
-    "@types/node": "~18.0.0",
-    "@types/mocha": "~10.0.0",
     "@types/chai": "~4.3.0",
-    "mocha": "~10.0.0",
+    "@types/mocha": "~10.0.0",
+    "@types/node": "~18.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
     "chai": "~4.3.0",
+    "eslint": "^8.57.1",
+    "mocha": "~10.0.0",
     "nyc": "~15.1.0",
-    "eslint": "~8.0.0",
-    "@typescript-eslint/eslint-plugin": "~6.0.0",
-    "@typescript-eslint/parser": "~6.0.0",
+    "rimraf": "~5.0.0",
     "typedoc": "~0.25.0",
-    "rimraf": "~5.0.0"
-  },
-  "dependencies": {}
+    "typescript": "~5.4.0"
+  }
 }

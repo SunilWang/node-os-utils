@@ -36,7 +36,12 @@ export class CommandExecutor {
    * 执行命令并返回结果
    */
   async execute(command: string, options: ExecuteOptions = {}): Promise<CommandResult> {
-    const mergedOptions = { ...this.defaultOptions, ...options };
+    const mergedOptions: ExecuteOptions = {
+      ...this.defaultOptions,
+      ...options,
+      // env 深合并，避免调用方传入 env 时整体覆盖内置的 LC_ALL/LANG 等 locale 设置
+      env: { ...this.defaultOptions.env, ...options.env }
+    };
     const startTime = Date.now();
 
     try {
@@ -65,6 +70,23 @@ export class CommandExecutor {
       }
 
       // 处理不同类型的错误
+      // maxBuffer 溢出：exec 会杀死子进程并附带 maxBuffer 相关错误，需优先识别，不能误分类为超时
+      if (
+        error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ||
+        (typeof error.message === 'string' && error.message.includes('maxBuffer'))
+      ) {
+        throw new MonitorError(
+          `Command output exceeded maxBuffer (${mergedOptions.maxBuffer} bytes): ${command}. Consider increasing the maxBuffer option.`,
+          ErrorCode.COMMAND_FAILED,
+          this.platform,
+          {
+            command,
+            maxBuffer: mergedOptions.maxBuffer,
+            executionTime
+          }
+        );
+      }
+
       if (error.killed && error.signal) {
         // 超时或被杀死的进程
         throw new MonitorError(
@@ -155,6 +177,46 @@ export class CommandExecutor {
   }
 
   /**
+   * 终止子进程及其进程树
+   *
+   * Windows 使用 taskkill /T /F 杀整棵进程树；POSIX 先发送 SIGTERM，
+   * 1 秒后仍未退出再发送 SIGKILL 兜底（shell 子进程可能脱离父进程存活）
+   * @param child 需要终止的子进程
+   */
+  private terminateProcessTree(child: ReturnType<typeof spawn>): void {
+    const pid = child.pid;
+
+    if (this.platform === 'win32') {
+      if (pid !== undefined) {
+        try {
+          spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' }).unref();
+        } catch {
+          // 进程已退出时忽略错误
+        }
+      }
+      return;
+    }
+
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // 进程已退出时忽略错误
+    }
+
+    // 1 秒后仍未退出则 SIGKILL 兜底；unref 避免该定时器阻止进程退出
+    const forceKillTimer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // 进程已退出时忽略错误
+      }
+    }, 1000);
+    if (typeof forceKillTimer.unref === 'function') {
+      forceKillTimer.unref();
+    }
+  }
+
+  /**
    * 执行多个命令
    */
   async executeMultiple(commands: string[], options: ExecuteOptions = {}): Promise<CommandResult[]> {
@@ -210,7 +272,12 @@ export class CommandExecutor {
     onData: (data: string, isError: boolean) => void,
     options: ExecuteOptions = {}
   ): Promise<CommandResult> {
-    const mergedOptions = { ...this.defaultOptions, ...options };
+    const mergedOptions: ExecuteOptions = {
+      ...this.defaultOptions,
+      ...options,
+      // env 深合并，避免调用方传入 env 时整体覆盖内置的 LC_ALL/LANG 等 locale 设置
+      env: { ...this.defaultOptions.env, ...options.env }
+    };
     const startTime = Date.now();
 
     return new Promise((resolve, reject) => {
@@ -244,6 +311,14 @@ export class CommandExecutor {
 
       let stdout = '';
       let stderr = '';
+      let timedOut = false;
+      // 流式执行不会经过 execAsync 的超时机制，因此在子进程层补充定时终止。
+      const timeoutTimer = mergedOptions.timeout && mergedOptions.timeout > 0
+        ? setTimeout(() => {
+          timedOut = true;
+          this.terminateProcessTree(child);
+        }, mergedOptions.timeout)
+        : undefined;
 
       child.stdout?.on('data', (data) => {
         const text = data.toString();
@@ -258,17 +333,29 @@ export class CommandExecutor {
       });
 
       child.on('close', (code) => {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         const executionTime = Date.now() - startTime;
+        // shell 被 kill 后通常以 null code 结束，使用标志位区分超时与正常退出。
+        const exitCode = code === null ? (timedOut ? 1 : 0) : code;
         const result: CommandResult = {
           stdout,
           stderr,
-          exitCode: code || 0,
+          exitCode,
           platform: this.platform,
           executionTime,
           command
         };
 
-        if (code === 0 || stdout.trim()) {
+        if (timedOut) {
+          reject(new MonitorError(
+            `Command timed out after ${mergedOptions.timeout}ms`,
+            ErrorCode.TIMEOUT,
+            this.platform,
+            result
+          ));
+        } else if (code === 0 || stdout.trim()) {
+          // 部分系统命令可能因单个资源权限异常返回非零码，但仍产出可用结果。
+          // 保持与 execute() 一致：有有效标准输出时交由调用方继续解析。
           resolve(result);
         } else {
           reject(new MonitorError(
@@ -281,6 +368,7 @@ export class CommandExecutor {
       });
 
       child.on('error', (error) => {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         const executionTime = Date.now() - startTime;
         reject(new MonitorError(
           `Command execution error: ${error.message}`,
@@ -297,9 +385,29 @@ export class CommandExecutor {
   }
 
   /**
+   * 校验命令名合法性，防止 shell 注入
+   *
+   * 仅允许字母、数字、点、下划线和连字符，不合法时直接抛出 MonitorError
+   * @param command 待校验的命令名
+   * @throws {MonitorError} 命令名包含非法字符时抛出 INVALID_CONFIG 错误
+   */
+  private assertValidCommandName(command: string): void {
+    if (!/^[a-zA-Z0-9._-]+$/.test(command)) {
+      throw new MonitorError(
+        `Invalid command name: ${command}`,
+        ErrorCode.INVALID_CONFIG,
+        this.platform,
+        { command }
+      );
+    }
+  }
+
+  /**
    * 检查命令是否可用
    */
   async isCommandAvailable(command: string): Promise<boolean> {
+    this.assertValidCommandName(command);
+
     const testCommand = this.platform === 'win32'
       ? `where ${command}`
       : `which ${command}`;
@@ -316,6 +424,8 @@ export class CommandExecutor {
    * 获取命令的版本信息
    */
   async getCommandVersion(command: string, versionFlag: string = '--version'): Promise<string> {
+    this.assertValidCommandName(command);
+
     try {
       const result = await this.execute(`${command} ${versionFlag}`, { timeout: 5000 });
       return result.stdout.trim();
@@ -348,8 +458,9 @@ export class CommandExecutor {
    */
   escapeArgument(arg: string): string {
     if (this.platform === 'win32') {
-      // Windows 命令行转义
-      return `"${arg.replace(/"/g, '""')}"`;
+      // Windows 命令行转义；结尾连续反斜杠需加倍，
+      // 否则包裹双引号后 \" 会被解析为转义引号，导致引号提前闭合
+      return `"${arg.replace(/"/g, '""').replace(/(\\+)$/, '$1$1')}"`;
     } else {
       // Unix-like 系统转义
       return `'${arg.replace(/'/g, "'\"'\"'")}'`;

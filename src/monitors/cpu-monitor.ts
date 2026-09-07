@@ -43,7 +43,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
         const rawData = await this.adapter.getCPUInfo();
         return this.transformCPUInfo(rawData);
       },
-      this.cpuConfig.cacheTTL || 30000 // CPU 信息缓存 30 秒
+      this.cpuConfig.cacheTTL ?? 30000 // CPU 信息缓存 30 秒
     );
   }
 
@@ -51,7 +51,8 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    * 获取 CPU 使用率
    */
   async usage(): Promise<MonitorResult<number>> {
-    const cacheKey = `cpu-usage-${this.cpuConfig.samplingInterval || 1000}`;
+    // excludeIowait 影响计算口径，必须纳入缓存键，避免改配置后 TTL 内返回旧口径数据
+    const cacheKey = `cpu-usage-${this.cpuConfig.samplingInterval || 1000}-${this.cpuConfig.excludeIowait ? 'noiowait' : 'raw'}`;
 
     return this.executeWithCache(
       cacheKey,
@@ -62,7 +63,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
         const usageData = this.transformCPUUsage(rawData);
         return usageData.overall;
       },
-      this.cpuConfig.cacheTTL || 1000 // 使用率缓存较短
+      this.cpuConfig.cacheTTL ?? 1000 // 使用率缓存较短
     );
   }
 
@@ -70,7 +71,8 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    * 获取详细的 CPU 使用率信息
    */
   async usageDetailed(): Promise<MonitorResult<CPUUsage>> {
-    const cacheKey = `cpu-usage-detailed-${this.cpuConfig.samplingInterval || 1000}`;
+    // 与 usage() 同理，excludeIowait 口径需纳入缓存键
+    const cacheKey = `cpu-usage-detailed-${this.cpuConfig.samplingInterval || 1000}-${this.cpuConfig.excludeIowait ? 'noiowait' : 'raw'}`;
 
     return this.executeWithCache(
       cacheKey,
@@ -80,7 +82,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
         const rawData = await this.adapter.getCPUUsage();
         return this.transformCPUUsage(rawData);
       },
-      this.cpuConfig.cacheTTL || 1000
+      this.cpuConfig.cacheTTL ?? 1000
     );
   }
 
@@ -88,7 +90,8 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    * 获取每个 CPU 核心的使用率
    */
   async usageByCore(): Promise<MonitorResult<number[]>> {
-    const cacheKey = `cpu-usage-cores-${this.cpuConfig.samplingInterval || 1000}`;
+    // 与 usage() 同理，excludeIowait 口径需纳入缓存键
+    const cacheKey = `cpu-usage-cores-${this.cpuConfig.samplingInterval || 1000}-${this.cpuConfig.excludeIowait ? 'noiowait' : 'raw'}`;
 
     return this.executeWithCache(
       cacheKey,
@@ -99,7 +102,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
         const usageData = this.transformCPUUsage(rawData);
         return usageData.cores || [];
       },
-      this.cpuConfig.cacheTTL || 1000
+      this.cpuConfig.cacheTTL ?? 1000
     );
   }
 
@@ -117,7 +120,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
         const rawData = await this.adapter.getSystemLoad();
         return this.transformLoadAverage(rawData);
       },
-      this.cpuConfig.cacheTTL || 5000
+      this.cpuConfig.cacheTTL ?? 5000
     );
   }
 
@@ -141,7 +144,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
         const rawData = await this.adapter.getCPUTemperature();
         return this.transformTemperature(rawData);
       },
-      this.cpuConfig.cacheTTL || 5000
+      this.cpuConfig.cacheTTL ?? 5000
     );
   }
 
@@ -166,7 +169,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
         const rawData = await this.adapter.getCPUInfo();
         return this.extractFrequencyInfo(rawData);
       },
-      this.cpuConfig.cacheTTL || 10000
+      this.cpuConfig.cacheTTL ?? 10000
     );
   }
 
@@ -190,7 +193,7 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
         const rawData = await this.adapter.getCPUInfo();
         return this.extractCacheInfo(rawData);
       },
-      this.cpuConfig.cacheTTL || 30000
+      this.cpuConfig.cacheTTL ?? 30000
     );
   }
 
@@ -205,11 +208,11 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
       async () => {
         const rawData = await this.adapter.getCPUInfo();
         return {
-          physical: rawData.cores || rawData.count || 1,
-          logical: rawData.threads || rawData.count || 1
+          physical: rawData.cores ?? rawData.count ?? 1,
+          logical: rawData.threads ?? rawData.count ?? 1
         };
       },
-      this.cpuConfig.cacheTTL || 60000 // 核心数很少变化，缓存 1 分钟
+      this.cpuConfig.cacheTTL ?? 60000 // 核心数很少变化，缓存 1 分钟
     );
   }
 
@@ -283,10 +286,10 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
       model: rawData.model || 'Unknown',
       manufacturer: rawData.manufacturer || rawData.vendor || 'Unknown',
       architecture: rawData.architecture || rawData.arch || 'Unknown',
-      cores: rawData.cores || rawData.count || 1,
-      threads: rawData.threads || rawData.cores || rawData.count || 1,
-      baseFrequency: rawData.baseFrequency || rawData.frequency || 0,
-      maxFrequency: rawData.maxFrequency || rawData.frequency || 0,
+      cores: rawData.cores ?? rawData.count ?? 1,
+      threads: rawData.threads ?? rawData.cores ?? rawData.count ?? 1,
+      baseFrequency: rawData.baseFrequency ?? rawData.frequency ?? 0,
+      maxFrequency: rawData.maxFrequency ?? rawData.frequency ?? 0,
       cache: this.transformCacheInfo(rawData.cache || {}),
       features: rawData.features || [],
       vendorId: rawData.vendorId || rawData.vendor_id,
@@ -301,16 +304,18 @@ export class CPUMonitor extends BaseMonitor<CPUInfo> {
    */
   private transformCPUUsage(rawData: any): CPUUsage {
     const iowait = this.safeParseNumber(rawData.iowait);
-    const rawOverall = this.safeParseNumber(rawData.overall || rawData.usage);
-    const overall = this.cpuConfig.excludeIowait
-      ? Math.max(0, rawOverall - iowait)
+    const rawOverall = this.safeParseNumber(rawData.overall ?? rawData.usage);
+    const adjustedOverall = this.cpuConfig.excludeIowait
+      ? rawOverall - iowait
       : rawOverall;
+    // 钳制在 [0, 100]，避免脏数据（如采样回绕）产生超出语义的百分比
+    const overall = Math.min(100, Math.max(0, adjustedOverall));
 
     return {
       overall,
-      cores: rawData.cores || [],
+      cores: rawData.cores ?? [],
       user: this.safeParseNumber(rawData.user),
-      system: this.safeParseNumber(rawData.system || rawData.sys),
+      system: this.safeParseNumber(rawData.system ?? rawData.sys),
       idle: this.safeParseNumber(rawData.idle),
       iowait,
       irq: this.safeParseNumber(rawData.irq),

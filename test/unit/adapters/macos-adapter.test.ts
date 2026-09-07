@@ -1,5 +1,7 @@
 import { expect } from 'chai';
 import os from 'os';
+import * as fsSync from 'fs';
+import path from 'path';
 
 import { MacOSAdapter } from '../../../src/adapters/macos-adapter';
 import { MonitorError, ErrorCode } from '../../../src/types/errors';
@@ -24,6 +26,12 @@ describe('MacOSAdapter 内部解析逻辑', () => {
     expect(result.memoryPercentage).to.be.closeTo(3.4, 0.0001);
     expect(result.cpuUsage).to.be.closeTo(12.5, 0.0001);
     expect(result.state).to.equal('R');
+  });
+
+  it('CPU 信息应返回标准架构标识', () => {
+    const adapter = new MacOSAdapter();
+    const result = (adapter as any).parseCPUInfo('Apple CPU', '4', '8', '2400000000');
+    expect(result.architecture).to.equal(os.arch());
   });
 
   it('应当根据 vm_stat 中的页面大小正确计算内存', () => {
@@ -139,6 +147,8 @@ describe('MacOSAdapter 内部解析逻辑', () => {
       const result = internal.parseSystemInfo(uname, uptime, loadavg, swVers);
 
       expect(result.platform).to.equal('darwin');
+      // uname -a 第 5 个字段固定为 "Kernel"，arch 必须来自 os.arch()
+      expect(result.arch).to.equal(os.arch());
       expect(result.version).to.equal(swVers.trim());
       expect(result.loadAverage.load1).to.be.closeTo(1.23, 0.0001);
       expect(result.uptimeSeconds).to.equal(1234);
@@ -281,21 +291,143 @@ describe('MacOSAdapter 内部解析逻辑', () => {
     }
   });
 
-  it('读取文件权限不足时应抛出权限错误', async () => {
+  it('读取文件权限不足时应抛出权限错误', async function () {
+    // root 用户忽略文件权限位，该用例无法复现 EACCES
+    if (typeof process.getuid === 'function' && process.getuid() === 0) {
+      this.skip();
+    }
+
     const adapter = new MacOSAdapter();
-    const internal = adapter as any;
-    internal.executeCommand = async () => {
-      throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
-    };
+    const tmpPath = path.join(os.tmpdir(), `node-os-utils-noaccess-${Date.now()}`);
+    fsSync.writeFileSync(tmpPath, 'secret');
+    fsSync.chmodSync(tmpPath, 0o000);
 
     try {
-      await adapter.readFile('/private/secret');
+      await adapter.readFile(tmpPath);
       expect.fail('should not succeed');
     } catch (error) {
       expect(error).to.be.instanceOf(MonitorError);
       const monitorError = error as MonitorError;
       expect(monitorError.code).to.equal(ErrorCode.PERMISSION_DENIED);
-      expect(monitorError.details.path).to.equal('/private/secret');
+      expect(monitorError.details.path).to.equal(tmpPath);
+    } finally {
+      fsSync.chmodSync(tmpPath, 0o600);
+      fsSync.rmSync(tmpPath, { force: true });
     }
+  });
+
+  it('读取不存在的文件时应抛出 FILE_NOT_FOUND 错误', async () => {
+    const adapter = new MacOSAdapter();
+
+    try {
+      await adapter.readFile('/nonexistent/path/to/file');
+      expect.fail('should not succeed');
+    } catch (error) {
+      expect(error).to.be.instanceOf(MonitorError);
+      const monitorError = error as MonitorError;
+      expect(monitorError.code).to.equal(ErrorCode.FILE_NOT_FOUND);
+      expect(monitorError.details.path).to.equal('/nonexistent/path/to/file');
+    }
+  });
+
+  it('readFile/fileExists 应基于 fs API 正常工作', async () => {
+    const adapter = new MacOSAdapter();
+    const tmpPath = path.join(os.tmpdir(), `node-os-utils-readfile-${Date.now()}`);
+    fsSync.writeFileSync(tmpPath, 'hello');
+
+    try {
+      expect(await adapter.readFile(tmpPath)).to.equal('hello');
+      expect(await adapter.fileExists(tmpPath)).to.be.true;
+      expect(await adapter.fileExists('/nonexistent/path/to/file')).to.be.false;
+    } finally {
+      fsSync.rmSync(tmpPath, { force: true });
+    }
+  });
+
+  it('解析进程列表时应将末尾 args 列整体保留，含空格路径不会导致列错位', () => {
+    const adapter = new MacOSAdapter();
+    const internal = adapter as any;
+
+    const output = [
+      '  123     1  12.5  3.4  20480 S    user   /Library/My App/bin/tool --flag',
+      '  124     1   0.0  0.1   1024 R    root   /usr/sbin/syslogd'
+    ].join('\n');
+
+    const result = internal.parseProcessList(output);
+
+    expect(result).to.have.lengthOf(2);
+    expect(result[0].pid).to.equal(123);
+    expect(result[0].ppid).to.equal(1);
+    expect(result[0].cpuUsage).to.be.closeTo(12.5, 0.0001);
+    expect(result[0].memoryUsage).to.equal(20480 * 1024);
+    expect(result[0].command).to.equal('/Library/My App/bin/tool --flag');
+    expect(result[1].user).to.equal('root');
+    expect(result[1].state).to.equal('R');
+    expect(result[1].command).to.equal('/usr/sbin/syslogd');
+  });
+
+  it('应当将 df -h 的 Bi/Ki/Mi/Gi/Ti 单位正确转换为字节', () => {
+    const adapter = new MacOSAdapter();
+    const internal = adapter as any;
+
+    expect(internal.convertDfSizeToBytes('512Bi')).to.equal(512);
+    expect(internal.convertDfSizeToBytes('0Bi')).to.equal(0);
+    expect(internal.convertDfSizeToBytes('203Ki')).to.equal(203 * 1024);
+    expect(internal.convertDfSizeToBytes('1.5Mi')).to.equal(1.5 * 1024 * 1024);
+    expect(internal.convertDfSizeToBytes('2Gi')).to.equal(2 * 1024 * 1024 * 1024);
+    expect(internal.convertDfSizeToBytes('1Ti')).to.equal(1024 * 1024 * 1024 * 1024);
+  });
+
+  it('应当解析 df -Ph 的 6 列 POSIX 输出，支持含空格的挂载点', () => {
+    const adapter = new MacOSAdapter();
+    const internal = adapter as any;
+
+    const output = [
+      'Filesystem        Size    Used   Avail Capacity  Mounted on',
+      '/dev/disk3s1s1   1.8Ti    12Gi   509Gi     3%    /',
+      'devfs            203Ki   203Ki     0Bi   100%    /dev',
+      '/dev/disk3s2     1.8Ti   8.5Gi   509Gi     2%    /Volumes/My Data'
+    ].join('\n');
+
+    const result = internal.parseDiskInfo(output);
+
+    expect(result).to.have.lengthOf(3);
+    expect(result[0].mountpoint).to.equal('/');
+    expect(result[1].available).to.equal(0);
+    expect(result[2].mountpoint).to.equal('/Volumes/My Data');
+    expect(result[2].usagePercentage).to.equal(2);
+  });
+
+  it('sw_vers 不可用时 version 应为 Unknown 而不是 uname 中的 "Darwin"', () => {
+    const adapter = new MacOSAdapter();
+    const internal = adapter as any;
+
+    const result = internal.parseSystemInfo(
+      'Darwin host 23.4.0 Darwin Kernel Version 23.4.0 arm64',
+      '',
+      '{ 0.10 0.20 0.30 }',
+      null
+    );
+
+    expect(result.version).to.equal('Unknown');
+    expect(result.arch).to.equal(os.arch());
+  });
+
+  it('应当在 who 输出无远程主机列时将 from 置为 undefined', () => {
+    const adapter = new MacOSAdapter();
+    const internal = adapter as any;
+
+    const output = [
+      'sunilwang console 9月  5 21:24',
+      'sunilwang ttys000 9月  5 21:45 (192.168.1.10)'
+    ].join('\n');
+
+    const result = internal.parseSystemUsers(output);
+
+    expect(result).to.have.lengthOf(2);
+    expect(result[0].from).to.be.undefined;
+    expect(result[0].loginTime).to.equal('9月 5 21:24');
+    expect(result[1].from).to.equal('(192.168.1.10)');
+    expect(result[1].loginTime).to.equal('9月 5 21:45');
   });
 });

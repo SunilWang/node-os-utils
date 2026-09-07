@@ -75,7 +75,7 @@ export interface MonitorConfig {
   interval?: Interval;
 
   /**
-   * 超时时间（毫秒）
+   * 超时时间（毫秒），作用于监控操作层（executeWithCache 包装的监控操作）
    */
   timeout?: number;
 
