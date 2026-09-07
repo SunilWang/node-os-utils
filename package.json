@@ -24,7 +24,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "clean": "rimraf dist",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc",
     "build:watch": "tsc --watch",
     "dev": "tsc --watch",

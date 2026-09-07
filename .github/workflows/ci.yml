@@ -26,15 +26,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         node-version: ['18', '20', '22']
-        # 每个操作系统对应的项目内平台测试脚本，
-        # 避免在 Windows pwsh/cmd 下执行 test:current-platform 的内联 node -e 引号转义问题
+        # 每个操作系统执行对应的平台集成测试，确保平台适配器被实际验证
         include:
           - os: ubuntu-latest
-            platform-test-script: test:linux
+            platform-test-script: linux
           - os: windows-latest
-            platform-test-script: test:windows
+            platform-test-script: windows
           - os: macos-latest
-            platform-test-script: test:macos
+            platform-test-script: macos
 
     steps:
       - name: Checkout
@@ -61,11 +60,11 @@ jobs:
       - name: Lint
         run: npm run lint:check
 
-      - name: Run tests
-        run: npm test
+      - name: Run unit tests
+        run: npm run test:unit
 
       - name: Run platform-specific tests
-        run: npm run ${{ matrix.platform-test-script }}
+        run: npx mocha "dist/test/platform/${{ matrix.platform-test-script }}.test.js"
 
       # 覆盖率非阻断，仅在 ubuntu + Node 22 组合上运行一次（对应 Travis 的 after_success || true）
       - name: Coverage
