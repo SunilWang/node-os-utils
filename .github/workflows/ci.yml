@@ -48,11 +48,14 @@ jobs:
       - name: Install dependencies
         run: npm ci --include=dev --production=false
 
+      - name: Verify TypeScript dependency
+        run: npm ls typescript --depth=0
+
       - name: Display versions
         run: |
           node --version
           npm --version
-          ./node_modules/.bin/tsc --version
+          npx --no-install tsc --version
 
       - name: Build
         run: npm run build
