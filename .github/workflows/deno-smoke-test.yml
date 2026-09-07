@@ -29,7 +29,7 @@ jobs:
         run: npm ci --include=dev --production=false
 
       - name: Verify TypeScript dependency
-        run: npm ls typescript --depth=0
+        run: node -e "const pkg = require('typescript/package.json'); if (!pkg.version) throw new Error('TypeScript package metadata is missing its version'); console.log('TypeScript', pkg.version)"
 
       - name: Build
         run: npm run build
