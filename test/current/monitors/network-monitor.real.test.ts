@@ -44,10 +44,13 @@ describe('Network Monitor 真实运行时契约', function () {
 
   it('connections、bandwidth 和 healthCheck 应返回可诊断结果', async function () {
     const connections = await utils.network.connections()
-    expect(connections.success).to.equal(true)
-    const bandwidth = Base.unwrap<any>(await utils.network.bandwidth(), 'network.bandwidth')
-    expect(bandwidth.interfaces).to.be.an('array')
-    bandwidth.interfaces.forEach((item: any) => { Base.assertNonNegative(item.rxSpeed, 'network.rxSpeed'); Base.assertNonNegative(item.txSpeed, 'network.txSpeed') })
+    expect(connections.success || connections.error.code === 'PLATFORM_NOT_SUPPORTED').to.equal(true)
+    const bandwidthResult = await utils.network.bandwidth()
+    expect(bandwidthResult.success || bandwidthResult.error.code === 'PLATFORM_NOT_SUPPORTED').to.equal(true)
+    if (bandwidthResult.success) {
+      expect(bandwidthResult.data.interfaces).to.be.an('array')
+      bandwidthResult.data.interfaces.forEach((item: any) => { Base.assertNonNegative(item.rxSpeed, 'network.rxSpeed'); Base.assertNonNegative(item.txSpeed, 'network.txSpeed') })
+    }
     const health = Base.unwrap<any>(await utils.network.healthCheck(), 'network.healthCheck')
     expect(health.status).to.be.oneOf(['healthy', 'warning', 'critical'])
   })

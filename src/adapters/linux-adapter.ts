@@ -860,7 +860,8 @@ export class LinuxAdapter extends BasePlatformAdapter {
     const processes: any[] = [];
 
     for (const line of lines) {
-      const match = line.match(/^(\d+)\s+(\d+)\s+(\S+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s*(.*)$/);
+      // ps 的无标题列默认右对齐，行首可能包含空格；先去除布局空白再解析字段。
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s*(.*)$/);
       if (!match) {
         continue;
       }
@@ -1484,11 +1485,35 @@ export class LinuxAdapter extends BasePlatformAdapter {
 
     for (const candidate of candidates) {
       if (candidate && archPattern.test(candidate)) {
-        return candidate;
+        return this.normalizeArchitecture(candidate);
       }
     }
 
     return 'Unknown';
+  }
+
+  /**
+   * 将 uname 等系统命令返回的架构别名归一化为 Node.js `os.arch()` 标识。
+   *
+   * @param architecture 原始架构名称
+   * @returns 与 Node.js 运行时一致的架构名称
+   */
+  private normalizeArchitecture(architecture: string): string {
+    const aliases: Record<string, string> = {
+      x86_64: 'x64',
+      amd64: 'x64',
+      i386: 'ia32',
+      i486: 'ia32',
+      i586: 'ia32',
+      i686: 'ia32',
+      aarch64: 'arm64',
+      armv8: 'arm64',
+      armv8l: 'arm64',
+      armv7: 'arm',
+      armv7l: 'arm'
+    };
+
+    return aliases[architecture.toLowerCase()] || architecture;
   }
 
   /**

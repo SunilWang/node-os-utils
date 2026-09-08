@@ -10,7 +10,6 @@ import { PlatformAdapter } from '../types/platform';
 import { CacheManager } from '../core/cache-manager';
 import {
   isValidPositiveProcessId,
-  isValidProcessId,
   isValidProcessSignal
 } from '../utils/process-killer';
 
@@ -267,20 +266,25 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
 
   /**
    * 检查进程是否存在
+   *
+   * @param pid 目标进程 ID
+   * @returns 进程存在性；明确不存在时返回 false，查询失败时保留原错误
    */
   async exists(pid: ProcessId): Promise<MonitorResult<boolean>> {
-    try {
-      const processResult = await this.byPid(pid);
-      return this.createSuccessResult(processResult.success && processResult.data !== null);
-    } catch (error) {
-      return this.createSuccessResult(false);
+    const processResult = await this.byPid(pid);
+    if (!processResult.success) {
+      if (processResult.error.code === 'NOT_AVAILABLE') {
+        return this.createSuccessResult(false);
+      }
+      return this.createErrorResult(processResult.error);
     }
+    return this.createSuccessResult(processResult.data !== null);
   }
 
   /**
    * 向指定进程发送终止信号。
    *
-   * @param pid 目标进程 ID，必须为安全整数；Unix 平台允许使用进程组语义
+   * @param pid 目标进程 ID，必须为大于 0 的安全整数
    * @param signal 信号名称或十进制编号，默认 SIGTERM
    * @returns 终止操作结果；运行时参数非法时返回 data=false
    */
@@ -288,7 +292,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
     try {
       this.validatePlatformSupport('process.kill');
 
-      if (!isValidProcessId(pid) || !isValidProcessSignal(signal)) {
+      if (!isValidPositiveProcessId(pid) || !isValidProcessSignal(signal)) {
         return this.createSuccessResult(false);
       }
 

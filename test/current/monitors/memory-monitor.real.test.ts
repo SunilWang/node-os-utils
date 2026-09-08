@@ -1,10 +1,17 @@
 import { expect } from 'chai'
+import * as os from 'os'
 import { OSUtils } from '../../../src'
 import { RealCommandTestBase as Base } from '../real-command-base'
 
 describe('Memory Monitor 真实运行时契约', function () {
   let utils: OSUtils
-  before(async function () { if (!['linux', 'darwin', 'win32'].includes(Base.platform())) this.skip(); await Base.requireRuntimeBaseline(this, { darwin: 'vm_stat' }); utils = new OSUtils({ cacheEnabled: false, timeout: 15000 }) })
+  before(async function () {
+    if (!['linux', 'darwin', 'win32'].includes(Base.platform())) this.skip()
+    // 监控器以 Node os API 的物理内存总量为基准；受限运行时返回 0 时无法验证真实内存契约。
+    if (os.totalmem() <= 0) this.skip()
+    await Base.requireRuntimeBaseline(this, { darwin: 'sysctl -n hw.memsize' })
+    utils = new OSUtils({ cacheEnabled: false, timeout: 15000 })
+  })
   after(function () { utils?.destroy() })
 
   it('info 应返回非负的内存分量', async function () {
@@ -40,7 +47,12 @@ describe('Memory Monitor 真实运行时契约', function () {
   })
 
   it('swap 应返回非负的交换空间字段或明确不支持', async function () {
-    const swap = Base.unwrap<any>(await utils.memory.swap(), 'memory.swap')
+    const result = await utils.memory.swap()
+    if (!result.success) {
+      expect(result.error.code).to.equal('PLATFORM_NOT_SUPPORTED')
+      return
+    }
+    const swap = result.data
     ;['total', 'used', 'free'].forEach(key => Base.assertNonNegative(swap[key].toBytes(), `memory.swap.${key}`))
   })
 

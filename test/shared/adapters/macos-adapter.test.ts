@@ -406,16 +406,22 @@ describe('MacOSAdapter 内部解析逻辑', () => {
   it('sw_vers 不可用时 version 应为 Unknown 而不是 uname 中的 "Darwin"', () => {
     const adapter = new MacOSAdapter();
     const internal = adapter as any;
+    const originalUptime = os.uptime;
+    (os as any).uptime = () => 1234;
 
-    const result = internal.parseSystemInfo(
-      'Darwin host 23.4.0 Darwin Kernel Version 23.4.0 arm64',
-      '',
-      '{ 0.10 0.20 0.30 }',
-      null
-    );
+    try {
+      const result = internal.parseSystemInfo(
+        'Darwin host 23.4.0 Darwin Kernel Version 23.4.0 arm64',
+        '',
+        '{ 0.10 0.20 0.30 }',
+        null
+      );
 
-    expect(result.version).to.equal('Unknown');
-    expect(result.arch).to.equal(os.arch());
+      expect(result.version).to.equal('Unknown');
+      expect(result.arch).to.equal(os.arch());
+    } finally {
+      (os as any).uptime = originalUptime;
+    }
   });
 
   it('应当在 who 输出无远程主机列时将 from 置为 undefined', () => {

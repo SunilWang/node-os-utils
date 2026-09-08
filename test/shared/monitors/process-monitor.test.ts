@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { ProcessMonitor } from '../../../src/monitors/process-monitor'
 import { PlatformAdapter, CommandResult, SupportedFeatures } from '../../../src/types/platform'
+import { ErrorCode, MonitorError } from '../../../src/types/errors'
 
 interface ProcessStubOptions {
   processes?: any[]
@@ -209,17 +210,16 @@ describe('ProcessMonitor', function() {
     expect(adapter.killProcessCalls).to.deep.equal([{ pid: 123, signal: 'SIGTERM' }])
   })
 
-  it('kill 应保留 Unix 的进程组 PID 语义并交由平台适配器处理', async function() {
+  it('kill 应拒绝 0 和负数 PID，避免发送进程组信号', async function() {
     const adapter = new ProcessAdapterStub()
     const monitor = new ProcessMonitor(adapter)
 
-    await monitor.kill(0, '0')
-    await monitor.kill(-123, 'SIGTERM')
+    const zeroResult = await monitor.kill(0, '0')
+    const negativeResult = await monitor.kill(-123, 'SIGTERM')
 
-    expect(adapter.killProcessCalls).to.deep.equal([
-      { pid: 0, signal: '0' },
-      { pid: -123, signal: 'SIGTERM' }
-    ])
+    expect(zeroResult.success && zeroResult.data).to.equal(false)
+    expect(negativeResult.success && negativeResult.data).to.equal(false)
+    expect(adapter.killProcessCalls).to.be.empty
   })
 
   it('kill 应在平台调用前拒绝包含非法字符的信号', async function() {
@@ -267,6 +267,21 @@ describe('ProcessMonitor', function() {
     expect(adapter.processInfoCalls).to.equal(0)
     expect(adapter.processOpenFilesCalls).to.equal(0)
     expect(adapter.processEnvironmentCalls).to.equal(0)
+  })
+
+  it('exists 应保留进程查询失败，不能误报为进程不存在', async function() {
+    const adapter = new ProcessAdapterStub()
+    adapter.getProcessInfo = async () => {
+      throw new MonitorError('查询失败', ErrorCode.COMMAND_FAILED, 'test-platform')
+    }
+    const monitor = new ProcessMonitor(adapter)
+
+    const result = await monitor.exists(123)
+
+    expect(result.success).to.equal(false)
+    if (!result.success) {
+      expect(result.error.code).to.equal(ErrorCode.COMMAND_FAILED)
+    }
   })
 
   it('parseStartTime 无法解析时应返回 undefined 且 runtime 不产生 NaN', function() {

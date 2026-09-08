@@ -358,6 +358,9 @@ export class WindowsAdapter extends BasePlatformAdapter {
       );
       return this.ensureArray(processes).map((proc: any) => this.normalizeProcess(proc));
     } catch (error) {
+      if (error instanceof MonitorError) {
+        throw error;
+      }
       throw this.createUnsupportedError('process.list');
     }
   }
@@ -375,7 +378,7 @@ export class WindowsAdapter extends BasePlatformAdapter {
 
     try {
       const processes = await this.executePowerShell(
-        `Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" | Select-Object ProcessId,ParentProcessId,Name,CommandLine,CreationDate,Priority,ThreadCount,WorkingSetSize | ConvertTo-Json`
+        `Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object ProcessId,ParentProcessId,Name,CommandLine,CreationDate,Priority,ThreadCount,WorkingSetSize | ConvertTo-Json`
       );
       const process = this.ensureArray(processes)[0];
       if (!process) {
@@ -383,6 +386,9 @@ export class WindowsAdapter extends BasePlatformAdapter {
       }
       return this.normalizeProcess(process);
     } catch (error) {
+      if (error instanceof MonitorError) {
+        throw error;
+      }
       throw this.createUnsupportedError('process.info');
     }
   }

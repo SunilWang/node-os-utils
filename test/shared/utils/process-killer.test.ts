@@ -56,6 +56,8 @@ describe('进程信号安全工具', () => {
 
     try {
       expect(sendProcessSignal('123;unexpected' as unknown as number, 'TERM')).to.be.false;
+      expect(sendProcessSignal(0, 'TERM')).to.be.false;
+      expect(sendProcessSignal(-123, 'TERM')).to.be.false;
       expect(sendProcessSignal(123, 'TERM;unexpected')).to.be.false;
       expect(callCount).to.equal(0);
     } finally {

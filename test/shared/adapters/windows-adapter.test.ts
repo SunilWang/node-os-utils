@@ -175,6 +175,29 @@ describe('WindowsAdapter 内部行为', () => {
       'taskkill /PID 456 /F'
     ]);
   });
+
+  it('getProcessInfo 应使用不含嵌套双引号的 PowerShell 过滤条件', async () => {
+    const adapter = new WindowsAdapter();
+    const internal = adapter as any;
+    let script = '';
+
+    internal.executePowerShell = async (command: string) => {
+      script = command;
+      return {
+        ProcessId: 123,
+        ParentProcessId: 1,
+        Name: 'node.exe',
+        CommandLine: 'node.exe app.js',
+        WorkingSetSize: 1024
+      };
+    };
+
+    const result = await adapter.getProcessInfo(123);
+
+    expect(result.pid).to.equal(123);
+    expect(script).to.include("-Filter 'ProcessId = 123'");
+    expect(script).to.not.include('-Filter "ProcessId = 123"');
+  });
 });
 
 describe('WindowsAdapter — Deno 兼容性降级', () => {
@@ -245,6 +268,17 @@ describe('WindowsAdapter — Deno 兼容性降级 (T021: US2)', () => {
       expect.fail('应该抛出 MonitorError');
     } catch (error: any) {
       expect(error).to.be.instanceOf(MonitorError);
+      expect(error.code).to.equal(ErrorCode.COMMAND_FAILED);
+    }
+  });
+
+  it('getProcessInfo() 在命令失败时应保留原始错误类型', async () => {
+    try {
+      await adapter.getProcessInfo(123);
+      expect.fail('应该抛出 MonitorError');
+    } catch (error: any) {
+      expect(error).to.be.instanceOf(MonitorError);
+      expect(error.code).to.equal(ErrorCode.COMMAND_FAILED);
     }
   });
 });

@@ -76,12 +76,12 @@ export function normalizeProcessSignal(signal: string): NodeJS.Signals | number 
 /**
  * 不经过 shell，直接向指定进程发送信号。
  *
- * @param pid 目标进程 ID；Unix 平台允许 0 或负数表示进程组
+ * @param pid 目标进程 ID，必须为大于 0 的安全整数
  * @param signal 信号名称或十进制编号，默认 SIGTERM
  * @returns 信号发送成功时返回 true；参数非法、平台不支持或进程不存在时返回 false
  */
 export function sendProcessSignal(pid: number, signal: string = 'SIGTERM'): boolean {
-  if (!isValidProcessId(pid)) {
+  if (!isValidPositiveProcessId(pid)) {
     return false;
   }
 

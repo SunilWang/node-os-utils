@@ -91,6 +91,17 @@ describe('LinuxAdapter 内部解析逻辑', () => {
     expect(result.startTime).to.be.at.least(lowerBound);
   });
 
+  it('应忽略 ps 无标题列产生的行首空格', () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+    const output = '    123     1 node             0.0  0.1    256 S root     node app.js\n';
+
+    const processes = internal.parseProcessList(output);
+
+    expect(processes).to.have.lengthOf(1);
+    expect(processes[0]).to.include({ pid: 123, ppid: 1, name: 'node', command: 'node app.js' });
+  });
+
   it('应正确解析包含空格和右括号的进程名', () => {
     const adapter = new LinuxAdapter();
     const internal = adapter as any;
@@ -119,7 +130,7 @@ describe('LinuxAdapter 内部解析逻辑', () => {
     const machine = 'x86_64\n';
 
     const info = internal.parseSystemInfo(uname, version, uptime, loadavg, machine);
-    expect(info.arch).to.equal('x86_64');
+    expect(info.arch).to.equal('x64');
   });
 
   it('在缺少 uname -m 时仍能推断常见架构', () => {
@@ -132,7 +143,7 @@ describe('LinuxAdapter 内部解析逻辑', () => {
     const loadavg = '0.50 0.60 0.70 1/1 2';
 
     const info = internal.parseSystemInfo(uname, version, uptime, loadavg, '');
-    expect(info.arch.toLowerCase()).to.equal('aarch64');
+    expect(info.arch.toLowerCase()).to.equal('arm64');
   });
 
   it('应正确解析多种默认网关格式', () => {

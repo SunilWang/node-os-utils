@@ -424,7 +424,10 @@ export class CommandExecutor {
   }
 
   /**
-   * 检查命令是否可用
+   * 检查命令是否可用。
+   *
+   * @param command 待检查的可执行文件名
+   * @returns 定位命令以零退出码结束时返回 true，否则返回 false
    */
   async isCommandAvailable(command: string): Promise<boolean> {
     this.assertValidCommandName(command);
@@ -434,8 +437,9 @@ export class CommandExecutor {
       : `which ${command}`;
 
     try {
-      await this.execute(testCommand, { timeout: 5000 });
-      return true;
+      const result = await this.execute(testCommand, { timeout: 5000 });
+      // execute 会为“非零退出但有 stdout”的通用解析场景保留结果；命令定位必须额外核对退出码。
+      return result.exitCode === 0;
     } catch {
       return false;
     }

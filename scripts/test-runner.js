@@ -68,10 +68,14 @@ function resolveGroups(target) {
  * 执行 Mocha 测试。
  *
  * @param {string[]} files 已编译测试文件路径
+ * @param {number | undefined} timeout 测试超时时间（毫秒）；真实命令分组需要覆盖 Mocha 默认 2 秒
  * @returns {void}
  */
-function runMocha(files) {
-  execFileSync(process.execPath, [mochaEntry, ...files], { stdio: 'inherit' })
+function runMocha(files, timeout) {
+  const args = timeout === undefined
+    ? [mochaEntry, ...files]
+    : [mochaEntry, '--timeout', String(timeout), ...files]
+  execFileSync(process.execPath, args, { stdio: 'inherit' })
 }
 
 const [target = 'all'] = process.argv.slice(2)
@@ -84,5 +88,6 @@ for (const group of groups) {
     continue
   }
   console.log(`[test-runner] 运行分组 ${group}（${files.length} 个文件）`)
-  runMocha(files)
+  // current 和系统分组会调用真实系统命令；Windows PowerShell/WMI 冷启动可能超过 2 秒。
+  runMocha(files, group === 'shared' ? undefined : 30000)
 }

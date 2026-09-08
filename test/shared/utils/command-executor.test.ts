@@ -236,6 +236,20 @@ describe('CommandExecutor Unit Tests', function() {
       }
     })
   })
+
+  describe('命令可用性检查', function() {
+    it('定位命令非零退出但含 stdout 时仍应返回 false', async function() {
+      const internal = executor as any
+      const originalExecute = internal.execute
+      internal.execute = async () => ({ stdout: 'not found', stderr: '', exitCode: 1 })
+
+      try {
+        expect(await executor.isCommandAvailable('missing-command')).to.equal(false)
+      } finally {
+        internal.execute = originalExecute
+      }
+    })
+  })
 })
 
 describe('CommandExecutor — Deno 兼容性：非标准异常处理', function() {
