@@ -145,6 +145,19 @@ describe('CommandExecutor Unit Tests', function() {
     })
   })
 
+  describe('参数转义', function() {
+    it('应根据实际运行平台转义参数，而不是适配器标识', function() {
+      const customExecutor = new CommandExecutor('test-platform')
+      const escaped = customExecutor.escapeArgument('console.log("hello world")')
+
+      if (process.platform === 'win32') {
+        expect(escaped).to.equal('"console.log(""hello world"")"')
+      } else {
+        expect(escaped).to.equal("'console.log(\"hello world\")'")
+      }
+    })
+  })
+
   describe('并发执行', function() {
     it('应该能够并发执行多个命令', async function() {
       const commands = [

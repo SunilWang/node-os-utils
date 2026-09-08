@@ -455,9 +455,14 @@ export class CommandExecutor {
 
   /**
    * 转义命令参数
+   *
+   * 命令执行的 shell 由当前 Node 运行平台决定，而 `platform` 字段只是
+   * 适配器的标识（单元测试也可能传入自定义值），不能用来选择引号规则。
+   * @param arg 待转义的命令参数
+   * @returns 适用于当前运行平台 shell 的参数字符串
    */
   escapeArgument(arg: string): string {
-    if (this.platform === 'win32') {
+    if (process.platform === 'win32') {
       // Windows 命令行转义；结尾连续反斜杠需加倍，
       // 否则包裹双引号后 \" 会被解析为转义引号，导致引号提前闭合
       return `"${arg.replace(/"/g, '""').replace(/(\\+)$/, '$1$1')}"`;
@@ -475,23 +480,58 @@ export class CommandExecutor {
     return [command, ...escapedArgs].join(' ');
   }
 
+  /**
+   * 将已构建的命令字符串拆分为 spawn 所需的参数。
+   *
+   * Windows 参数可能使用连续双引号表示参数中的字面量双引号，不能用
+   * 简单的正则按空白切分，否则 Node 的 `-e` 脚本会被拆成多个参数。
+   * @param command 待解析的命令字符串
+   * @returns 可传给 spawn 的参数列表
+   */
   private tokenizeCommand(command: string): string[] {
-    const matches = command.match(/"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'|[^\s]+/g);
-    if (!matches) {
-      return [];
-    }
+    const tokens: string[] = [];
+    let token = '';
+    let quoteChar: '"' | "'" | null = null;
 
-    return matches.map(token => {
-      const startsWithQuote = token.startsWith('"') || token.startsWith("'");
-      const endsWithQuote = token.endsWith('"') || token.endsWith("'");
+    for (let index = 0; index < command.length; index += 1) {
+      const char = command[index];
 
-      if (startsWithQuote && endsWithQuote && token.length >= 2) {
-        const unquoted = token.slice(1, -1);
-        return unquoted.replace(/\\([\\'" ])/g, '$1');
+      if (char === '"' || char === "'") {
+        if (quoteChar === '"' && char === '"' && command[index + 1] === '"') {
+          token += '"';
+          index += 1;
+        } else if (quoteChar === null) {
+          quoteChar = char;
+        } else if (quoteChar === char) {
+          quoteChar = null;
+        } else {
+          token += char;
+        }
+        continue;
       }
 
-      return token;
-    });
+      if (char === '\\' && command[index + 1] === '"' && quoteChar === '"') {
+        token += '"';
+        index += 1;
+        continue;
+      }
+
+      if (/\s/.test(char) && quoteChar === null) {
+        if (token) {
+          tokens.push(token);
+          token = '';
+        }
+        continue;
+      }
+
+      token += char;
+    }
+
+    if (token) {
+      tokens.push(token);
+    }
+
+    return tokens;
   }
 
   /**
