@@ -292,6 +292,11 @@ describe('MacOSAdapter 内部解析逻辑', () => {
   });
 
   it('读取文件权限不足时应抛出权限错误', async function () {
+    // Windows 的 chmod 不会按 Unix mode bits 限制当前进程读取，无法可靠模拟 EACCES。
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+
     // root 用户忽略文件权限位，该用例无法复现 EACCES
     if (typeof process.getuid === 'function' && process.getuid() === 0) {
       this.skip();

@@ -186,7 +186,8 @@ export class CommandExecutor {
   private terminateProcessTree(child: ReturnType<typeof spawn>): void {
     const pid = child.pid;
 
-    if (this.platform === 'win32') {
+    // 进程终止方式取决于实际宿主系统；platform 仅用于标识适配器和错误来源。
+    if (process.platform === 'win32') {
       if (pid !== undefined) {
         try {
           spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' }).unref();
