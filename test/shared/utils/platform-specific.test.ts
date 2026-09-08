@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 
-import { CrossPlatformValidator } from '../../utils/platform-specific'
+import { CrossPlatformValidator } from './platform-specific'
 
 describe('CrossPlatformValidator.validateSystemInfo', () => {
   it('应该验证包含核心字段的macOS系统信息', () => {

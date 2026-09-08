@@ -59,7 +59,7 @@ export class LinuxTestUtils {
   static validateMemoryInfo(info: any): boolean {
     const requiredFields = ['totalMemMb', 'usedMemMb', 'freeMemMb', 'usedMemPercentage', 'freeMemPercentage']
     return requiredFields.every(field =>
-      info.hasOwnProperty(field) && TestValidators.isValidNumber(parseFloat(info[field]))
+      Object.prototype.hasOwnProperty.call(info, field) && TestValidators.isValidNumber(parseFloat(info[field]))
     )
   }
 }
@@ -114,7 +114,7 @@ export class MacOSTestUtils {
   static validateDiskInfo(info: any): boolean {
     const requiredFields = ['totalGb', 'usedGb', 'freeGb', 'usedPercentage', 'freePercentage']
     return requiredFields.every(field =>
-      info.hasOwnProperty(field) && TestValidators.isValidNumber(parseFloat(info[field]))
+      Object.prototype.hasOwnProperty.call(info, field) && TestValidators.isValidNumber(parseFloat(info[field]))
     )
   }
 }
@@ -175,7 +175,7 @@ export class WindowsTestUtils {
   static validateMemoryInfo(info: any): boolean {
     const requiredFields = ['totalMemMb', 'usedMemMb', 'freeMemMb']
     return requiredFields.every(field =>
-      info.hasOwnProperty(field) && TestValidators.isValidNumber(parseFloat(info[field]))
+      Object.prototype.hasOwnProperty.call(info, field) && TestValidators.isValidNumber(parseFloat(info[field]))
     )
   }
 
@@ -185,7 +185,7 @@ export class WindowsTestUtils {
   static validateDiskInfo(info: any): boolean {
     const requiredFields = ['totalGb', 'usedGb', 'freeGb']
     return requiredFields.every(field =>
-      info.hasOwnProperty(field) && TestValidators.isValidNumber(parseFloat(info[field]))
+      Object.prototype.hasOwnProperty.call(info, field) && TestValidators.isValidNumber(parseFloat(info[field]))
     )
   }
 }

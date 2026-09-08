@@ -10,7 +10,6 @@ import type {
   SwapInfo,
   DiskInfo,
   DiskUsage,
-  NetworkInterface,
   NetworkStats,
   ProcessInfo,
   SystemInfo

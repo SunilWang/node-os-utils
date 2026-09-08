@@ -224,7 +224,7 @@ describe('Error Handling Unit Tests', function() {
         fr: 'Fichier non trouvé'
       }
 
-      Object.entries(messages).forEach(([lang, message]) => {
+      Object.entries(messages).forEach(([_lang, message]) => {
         const error = new MonitorError(message, ErrorCode.FILE_NOT_FOUND, 'file-system')
         expect(error.message).to.equal(message)
         expect(error.code).to.equal(ErrorCode.FILE_NOT_FOUND)

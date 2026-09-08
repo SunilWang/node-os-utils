@@ -79,7 +79,7 @@ class ProcessAdapterStub implements PlatformAdapter {
     return feature.startsWith('process')
   }
 
-  async executeCommand(command: string, options?: any): Promise<CommandResult> {
+  async executeCommand(command: string, _options?: any): Promise<CommandResult> {
     return {
       stdout: '',
       stderr: '',

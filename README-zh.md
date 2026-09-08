@@ -567,7 +567,7 @@ if (currentProc.success && currentProc.data) {
 | `stats()` | `Promise<MonitorResult<{ total: number; running: number; sleeping: number; waiting: number; zombie: number; stopped: number; unknown: number; totalCpuUsage: number; totalMemoryUsage: DataSize }>>` | 进程统计汇总 | ✅ 全部 |
 | `kill(pid, signal?)` | `Promise<MonitorResult<boolean>>` | 使用校验后的信号终止数字 PID | ⚠️ 有限 |
 
-所有基于 PID 的进程查询都会先校验运行时参数，再调用平台命令。`kill()` 支持 `TERM` / `SIGTERM` 等信号名称或十进制信号编号。运行时参数非法时返回 `data: false`，且参数不会传入 shell。Unix 的 `kill()` 保留 PID `0` / 负数对应的原生进程组语义；Windows 要求正整数 PID，并将 `SIGKILL` / `KILL` / `9` 映射为强制 `taskkill`。
+所有基于 PID 的进程查询都会先校验运行时参数，再调用平台命令。`kill()` 支持 `TERM` / `SIGTERM` 等信号名称或十进制信号编号。为避免误向进程组广播信号，所有平台的 `kill()` 均只接受正安全整数 PID；运行时参数非法时返回 `data: false`，且参数不会传入 shell。Windows 会将 `SIGKILL` / `KILL` / `9` 映射为强制 `taskkill`。
 
 ### 🖥️ 系统监控器
 
@@ -1071,13 +1071,13 @@ npm run build
 # 监控模式开发
 npm run build:watch
 
-# 运行所有测试
+# 运行当前平台全部测试（shared + current + 匹配的系统目录）
 npm test
 
-# 仅运行当前平台测试
-npm run test:current-platform
+# 同上，自动检测当前平台
+npm run test:platform
 
-# 运行特定平台测试
+# 运行指定系统目录的测试（其他系统的测试会被跳过）
 npm run test:linux    # Linux 特定测试
 npm run test:macos    # macOS 特定测试
 npm run test:windows  # Windows 特定测试
@@ -1098,28 +1098,28 @@ npm run docs
 **可用的测试脚本：**
 
 ```bash
-# 核心测试套件
-npm test                    # 所有测试
-npm run test:unit          # 仅单元测试
-npm run test:integration   # 仅集成测试
-npm run test:platform      # 平台特定测试
+# 核心测试套件（shared + current + 匹配的系统目录）
+npm test                    # 构建并运行当前平台全部测试
+npm run test:unit           # 同上，不含构建
+npm run test:platform       # 同上，自动检测当前平台
 
-# 平台特定测试
-npm run test:linux         # 仅 Linux 测试
-npm run test:macos         # 仅 macOS 测试
-npm run test:windows       # 仅 Windows 测试
-npm run test:current-platform  # 仅当前平台
+# 运行指定系统目录的测试（其他系统的测试会被跳过）
+npm run test:linux         # shared + current + linux/
+npm run test:macos         # shared + current + macos/
+npm run test:windows       # shared + current + windows/
 
 # 覆盖率和报告
 npm run test:coverage      # 带覆盖率报告
-npm run test:watch         # 监控模式
 ```
 
 **测试结构：**
-- `test/unit/` - 单个组件的单元测试
-- `test/integration/` - 集成测试
-- `test/platform/` - 平台特定功能测试
-- `test/utils/` - 测试工具和助手
+
+测试按「系统 + 模块」分组，不再区分测试类型（mock / 真实命令）：
+- `test/shared/` - 平台无关测试（core、types、mock 适配器/监控器、共享测试工具）
+- `test/linux/`、`test/macos/`、`test/windows/` - 各系统专属的真实命令测试和系统集成测试
+- `test/current/` - 跨平台真实命令测试，内部自检当前系统（monitors、`OSUtils`、`CommandExecutor`）
+
+真实命令和系统测试覆盖解析逻辑、缓存行为和真实系统调用。测试只执行当前平台对应的 Adapter；命令缺失、权限不足或明确的平台能力限制会对单条用例标记为 pending，超时和普通实现错误仍会失败。
 
 ### 贡献指南
 

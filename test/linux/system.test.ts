@@ -6,13 +6,11 @@
 import { expect } from 'chai'
 import {
   PlatformUtils,
-  TestValidators,
-  TestAssertions,
   asyncTest,
   longTest,
   PerformanceMonitor
-} from '../utils/test-base'
-import { LinuxTestUtils, CrossPlatformValidator } from '../utils/platform-specific'
+} from '../shared/utils/test-base'
+import { LinuxTestUtils } from '../shared/utils/platform-specific'
 import { OSUtils } from '../../src'
 
 // 只在Linux系统上运行这些测试
@@ -255,7 +253,6 @@ describe('Linux System Tests', function() {
 
         if (result.success) {
           const interfaceNames = result.data.map(i => i.name)
-          const commonLinuxInterfaces = ['lo', 'eth0', 'wlan0', 'enp0s3', 'docker0']
 
           // 应该至少包含本地回环接口
           expect(interfaceNames.some(name => name === 'lo')).to.be.true

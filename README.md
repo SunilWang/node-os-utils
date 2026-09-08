@@ -566,7 +566,7 @@ if (currentProc.success && currentProc.data) {
 | `stats()` | `Promise<MonitorResult<{ total: number; running: number; sleeping: number; waiting: number; zombie: number; stopped: number; unknown: number; totalCpuUsage: number; totalMemoryUsage: DataSize }>>` | Aggregate process statistics | ✅ All |
 | `kill(pid, signal?)` | `Promise<MonitorResult<boolean>>` | Terminate a numeric PID with a validated signal | ⚠️ Limited |
 
-All PID-based process lookups validate runtime values before invoking platform commands. `kill()` accepts signal names such as `TERM` / `SIGTERM` or decimal signal numbers. Invalid runtime values return `data: false` and are never passed to a shell. Unix keeps the native PID `0` / negative process-group semantics for `kill()`; Windows requires a positive PID and maps `SIGKILL` / `KILL` / `9` to forced `taskkill`.
+All PID-based process lookups validate runtime values before invoking platform commands. `kill()` accepts signal names such as `TERM` / `SIGTERM` or decimal signal numbers. To prevent accidental process-group broadcasts, `kill()` requires a positive safe-integer PID on every platform; invalid runtime values return `data: false` and are never passed to a shell. Windows maps `SIGKILL` / `KILL` / `9` to forced `taskkill`.
 
 ### 🖥️ System Monitor
 
@@ -1069,13 +1069,13 @@ npm run build
 # Watch mode for development
 npm run build:watch
 
-# Run all tests
+# Run all tests for the current platform (shared + current + matching system directory)
 npm test
 
-# Run tests for current platform only
-npm run test:current-platform
+# Same as above, auto-detecting the current platform
+npm run test:platform
 
-# Run specific platform tests
+# Run against a specific system directory (tests for other OSes are skipped)
 npm run test:linux    # Linux-specific tests
 npm run test:macos    # macOS-specific tests
 npm run test:windows  # Windows-specific tests
@@ -1096,28 +1096,28 @@ npm run docs
 **Available Test Scripts:**
 
 ```bash
-# Core test suites
-npm test                    # All tests
-npm run test:unit          # Unit tests only
-npm run test:integration   # Integration tests only
-npm run test:platform      # Platform-specific tests
+# Core test suites (shared + current + the matching system directory)
+npm test                    # Build and run all tests for the current platform
+npm run test:unit           # Same as above, without build
+npm run test:platform       # Same as above, auto-detects current platform
 
-# Platform-specific testing
-npm run test:linux         # Linux-only tests
-npm run test:macos         # macOS-only tests
-npm run test:windows       # Windows-only tests
-npm run test:current-platform  # Current platform only
+# Run against a specific system directory (tests for other OSes are skipped)
+npm run test:linux          # shared + current + linux/
+npm run test:macos          # shared + current + macos/
+npm run test:windows        # shared + current + windows/
 
 # Coverage and reporting
 npm run test:coverage      # With coverage report
-npm run test:watch         # Watch mode
 ```
 
 **Test Structure:**
-- `test/unit/` - Unit tests for individual components
-- `test/integration/` - Integration tests
-- `test/platform/` - Platform-specific functionality tests
-- `test/utils/` - Test utilities and helpers
+
+Tests are grouped by system, then by module — not by test type (mock vs. real command):
+- `test/shared/` - Platform-agnostic tests (core, types, mocked adapters/monitors, shared test utilities)
+- `test/linux/`, `test/macos/`, `test/windows/` - Real command tests and system integration tests specific to each OS
+- `test/current/` - Cross-platform real command tests that self-check the current platform at runtime (monitors, `OSUtils`, `CommandExecutor`)
+
+Real command and system tests cover parsing, caching, and direct system calls. Only the Adapter for the current platform is executed; a single test may be pending when a command is missing, permission-restricted, or an explicitly unsupported capability is unavailable. Timeouts and ordinary implementation errors still fail the test.
 
 ### Contributing Guidelines
 
