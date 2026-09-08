@@ -177,7 +177,8 @@ describe('Windows System Tests', function() {
           
           // Windows 系统应该有驱动器盘符
           const driveLetters = result.data.map(d => d.mountpoint)
-          expect(driveLetters.some(drive => /^[A-Z]:$/.test(drive))).to.be.true
+          // PowerShell 返回的根路径通常带反斜杠（如 C:\），两种形式都属于有效盘符。
+          expect(driveLetters.some(drive => /^[A-Z]:\\?$/i.test(drive))).to.be.true
         }
       }))
 
@@ -199,7 +200,7 @@ describe('Windows System Tests', function() {
 
     describe('#usage()', function() {
       it('Windows磁盘空间信息应该一致', asyncTest(async function() {
-        const result = await osu.disk.usage()
+        const result = await osu.disk.overallUsage()
         
         if (!result.success) {
           this.skip()
