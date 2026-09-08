@@ -126,7 +126,12 @@ describe('LinuxAdapter 真实系统调用', function () {
     expect(info.used).to.equal(info.total - info.available);
     expectNonNegative(info.available, 'available');
     expect(info.usagePercentage).to.be.within(0, 100);
-    expect(await adapter.getMemoryUsage()).to.deep.equal(info);
+    const usage = await adapter.getMemoryUsage();
+    // getMemoryUsage 会重新采样 /proc/meminfo，动态字段不应与上一次快照做深相等比较。
+    expect(usage.total).to.equal(info.total);
+    expect(usage.used).to.equal(usage.total - usage.available);
+    expectNonNegative(usage.available, 'usage.available');
+    expectPercentage(usage.usagePercentage, 'usage.usagePercentage');
   });
 
   it('应真实读取磁盘、挂载点和文件系统', async () => {
@@ -312,13 +317,14 @@ describe('LinuxAdapter 真实系统调用', function () {
     });
   });
 
-  it('df -PB1 的每条磁盘记录应满足 total 等于 used 加 available', async () => {
+  it('df -PB1 的每条磁盘记录应满足已用与可用之和不超过总量', async () => {
     const disks = await adapter.getDiskUsage();
     disks.forEach((disk: any) => {
       expectNonNegative(disk.total, `${disk.mountPoint}.total`);
       expectNonNegative(disk.used, `${disk.mountPoint}.used`);
       expectNonNegative(disk.available, `${disk.mountPoint}.available`);
-      expect(disk.total).to.equal(disk.used + disk.available);
+      // df 的 available 不包含文件系统保留块，因此 total 可以大于 used + available。
+      expect(disk.used + disk.available).to.be.at.most(disk.total);
     });
   });
 

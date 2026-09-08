@@ -178,6 +178,20 @@ describe('MacOSAdapter 内部解析逻辑', () => {
     expect(stats[0].collisions).to.equal(2);
   });
 
+  it('应当移除 netstat 未激活接口名末尾的状态标记', () => {
+    const adapter = new MacOSAdapter();
+    const internal = adapter as any;
+    const netstatOutput = [
+      'Name  Mtu   Network  Address  Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll',
+      'gif0* 1280  <Link#2> 00:00:00:00:00:00 0 0 0 0 0 0 0'
+    ].join('\n');
+
+    const stats = internal.parseNetworkStats(netstatOutput);
+
+    expect(stats).to.have.lengthOf(1);
+    expect(stats[0].interface).to.equal('gif0');
+  });
+
   it('应当从 route 输出中解析默认网关', () => {
     const adapter = new MacOSAdapter();
     const internal = adapter as any;
@@ -219,6 +233,30 @@ describe('MacOSAdapter 内部解析逻辑', () => {
       expect(await adapter.getProcessOpenFiles('123;unexpected' as unknown as number)).to.deep.equal([]);
       expect(await adapter.getProcessEnvironment('123;unexpected' as unknown as number)).to.deep.equal({});
       expect(nativeCalls).to.deep.equal([{ pid: 123, signal: 'SIGTERM' }]);
+      expect(commandCallCount).to.equal(0);
+    } finally {
+      (process as any).kill = originalKill;
+    }
+  });
+
+  it('getProcessInfo 应在进程明确不存在时返回 null 且不执行 ps', async () => {
+    const adapter = new MacOSAdapter();
+    const internal = adapter as any;
+    const originalKill = process.kill;
+    let commandCallCount = 0;
+
+    (process as any).kill = () => {
+      const error = new Error('No such process') as NodeJS.ErrnoException;
+      error.code = 'ESRCH';
+      throw error;
+    };
+    internal.executeCommand = async () => {
+      commandCallCount += 1;
+      throw new Error('不存在的进程不应继续执行 ps');
+    };
+
+    try {
+      expect(await adapter.getProcessInfo(99999999)).to.equal(null);
       expect(commandCallCount).to.equal(0);
     } finally {
       (process as any).kill = originalKill;

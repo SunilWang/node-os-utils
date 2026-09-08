@@ -254,25 +254,34 @@ describe('LinuxAdapter 内部解析逻辑', () => {
   it('getMemoryInfo() 降级路径应返回字节单位且字段形状与正常路径一致', async () => {
     const adapter = new LinuxAdapter();
     const internal = adapter as any;
+    const originalTotalMem = os.totalmem;
+    const originalFreeMem = os.freemem;
+    const total = 16 * 1024 * 1024 * 1024;
+    const free = 5 * 1024 * 1024 * 1024;
 
     // stub readFile 使 /proc/meminfo 读取失败，触发降级路径
     internal.readFile = async () => {
       throw new MonitorError('/proc/meminfo 不可访问', ErrorCode.COMMAND_FAILED, 'linux');
     };
+    (os as any).totalmem = () => total;
+    (os as any).freemem = () => free;
 
-    const result = await adapter.getMemoryInfo();
-    const total = os.totalmem();
-    const free = os.freemem();
+    try {
+      const result = await adapter.getMemoryInfo();
 
-    expect(result.total).to.equal(total);
-    expect(result.free).to.equal(free);
-    expect(result.used).to.equal(total - free);
-    expect(result.available).to.equal(free);
-    expect(result.shared).to.equal(0);
-    expect(result.buffers).to.equal(0);
-    expect(result.cached).to.equal(0);
-    expect(result.usagePercentage).to.be.closeTo(((total - free) / total) * 100, 0.0001);
-    expect(result.swap).to.deep.equal({ total: 0, free: 0, used: 0 });
+      expect(result.total).to.equal(total);
+      expect(result.free).to.equal(free);
+      expect(result.used).to.equal(total - free);
+      expect(result.available).to.equal(free);
+      expect(result.shared).to.equal(0);
+      expect(result.buffers).to.equal(0);
+      expect(result.cached).to.equal(0);
+      expect(result.usagePercentage).to.be.closeTo(((total - free) / total) * 100, 0.0001);
+      expect(result.swap).to.deep.equal({ total: 0, free: 0, used: 0 });
+    } finally {
+      (os as any).totalmem = originalTotalMem;
+      (os as any).freemem = originalFreeMem;
+    }
   });
 
   it('getProcessInfo() 在进程不存在时应透传 NOT_AVAILABLE，不包装成 COMMAND_FAILED', async () => {

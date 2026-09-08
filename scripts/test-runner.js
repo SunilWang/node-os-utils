@@ -88,6 +88,6 @@ for (const group of groups) {
     continue
   }
   console.log(`[test-runner] 运行分组 ${group}（${files.length} 个文件）`)
-  // current 和系统分组会调用真实系统命令；Windows PowerShell/WMI 冷启动可能超过 2 秒。
-  runMocha(files, group === 'shared' ? undefined : 30000)
+  // shared 在高负载 CI 上也可能被调度暂停；真实命令分组则需覆盖 PowerShell/WMI 冷启动。
+  runMocha(files, group === 'shared' ? 10000 : 30000)
 }

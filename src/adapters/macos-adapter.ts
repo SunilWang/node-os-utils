@@ -264,6 +264,10 @@ export class MacOSAdapter extends BasePlatformAdapter {
     }
 
     try {
+      if (!this.processExists(pid)) {
+        return null;
+      }
+
       const [summaryResult, commandResult, startResult] = await Promise.all([
         this.executeCommand(`ps -p ${pid} -o pid=,ppid=,rss=,pcpu=,pmem=,state=,user=`),
         this.executeCommand(`ps -p ${pid} -o command=`),
@@ -684,7 +688,8 @@ export class MacOSAdapter extends BasePlatformAdapter {
       const fields = lines[i].trim().split(/\s+/);
       if (fields.length < 8) continue;
 
-      const name = fields[0];
+      // macOS netstat 会为未激活接口追加 "*"，该字符是状态标记而非接口名的一部分。
+      const name = fields[0].replace(/\*$/, '');
       const mtu = this.safeParseInt(fields[1]);
 
       if (header.includes('ibytes') && fields.length >= 11) {
@@ -1268,6 +1273,29 @@ export class MacOSAdapter extends BasePlatformAdapter {
     });
 
     return result;
+  }
+
+  /**
+   * 使用 Node.js 原生信号 0 判断进程是否存在，不向目标进程发送实际信号。
+   *
+   * @param pid 目标进程 ID
+   * @returns 进程存在或因权限无法探测时返回 true，明确不存在时返回 false
+   * @throws 遇到 ESRCH、EPERM 之外的系统错误时透传原异常
+   */
+  private processExists(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code === 'ESRCH') {
+        return false;
+      }
+      if (code === 'EPERM') {
+        return true;
+      }
+      throw error;
+    }
   }
 
   /**
