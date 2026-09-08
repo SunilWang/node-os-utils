@@ -313,11 +313,27 @@ export class CommandExecutor {
       let stdout = '';
       let stderr = '';
       let timedOut = false;
+      let settled = false;
       // 流式执行不会经过 execAsync 的超时机制，因此在子进程层补充定时终止。
       const timeoutTimer = mergedOptions.timeout && mergedOptions.timeout > 0
         ? setTimeout(() => {
           timedOut = true;
           this.terminateProcessTree(child);
+          // Windows 的 shell 进程可能迟迟不触发 close；超时语义不能依赖该事件。
+          settled = true;
+          reject(new MonitorError(
+            `Command timed out after ${mergedOptions.timeout}ms`,
+            ErrorCode.TIMEOUT,
+            this.platform,
+            {
+              stdout,
+              stderr,
+              exitCode: 1,
+              platform: this.platform,
+              executionTime: Date.now() - startTime,
+              command
+            }
+          ));
         }, mergedOptions.timeout)
         : undefined;
 
@@ -335,6 +351,8 @@ export class CommandExecutor {
 
       child.on('close', (code) => {
         if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (settled) return;
+        settled = true;
         const executionTime = Date.now() - startTime;
         // shell 被 kill 后通常以 null code 结束，使用标志位区分超时与正常退出。
         const exitCode = code === null ? (timedOut ? 1 : 0) : code;
@@ -370,6 +388,8 @@ export class CommandExecutor {
 
       child.on('error', (error) => {
         if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (settled) return;
+        settled = true;
         const executionTime = Date.now() - startTime;
         reject(new MonitorError(
           `Command execution error: ${error.message}`,
