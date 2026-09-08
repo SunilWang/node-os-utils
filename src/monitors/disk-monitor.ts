@@ -541,8 +541,8 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
           const counterPath = path.join(sysBlockDir, device, 'device', 'ioerr_cnt');
           try {
             const content = fs.readFileSync(counterPath, 'utf8').trim();
-            const count = parseInt(content, 10);
-            if (!Number.isNaN(count)) {
+            const count = this.parseIOErrorCounter(content);
+            if (count !== null) {
               readableCounters += 1;
               totalErrors += count;
             }
@@ -591,6 +591,23 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
     }
 
     return { hasErrors, checked, issues };
+  }
+
+  /**
+   * 解析 Linux SCSI ioerr_cnt 计数器。
+   *
+   * 内核通常以 0x 前缀的十六进制输出该字段，同时兼容十进制表示。
+   * @param content ioerr_cnt 文件内容
+   * @returns 非负有限计数；格式非法时返回 null
+   */
+  private parseIOErrorCounter(content: string): number | null {
+    const normalized = content.trim();
+    if (!normalized) {
+      return null;
+    }
+
+    const count = Number(normalized);
+    return Number.isSafeInteger(count) && count >= 0 ? count : null;
   }
 
   /**

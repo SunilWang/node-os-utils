@@ -50,6 +50,18 @@ describe('DiskMonitor 数据转换', () => {
     expect(stats[0].readBytes.toBytes()).to.equal(8 * 512);
     expect(stats[0].writeBytes.toBytes()).to.equal(4 * 512);
   });
+
+  it('应解析十六进制和十进制 ioerr_cnt', () => {
+    const monitor = new DiskMonitor({} as any);
+    const parse = (monitor as any).parseIOErrorCounter.bind(monitor);
+
+    expect(parse('0x0')).to.equal(0);
+    expect(parse('0x10')).to.equal(16);
+    expect(parse('12')).to.equal(12);
+    expect(parse('')).to.equal(null);
+    expect(parse('1.5')).to.equal(null);
+    expect(parse('invalid')).to.equal(null);
+  });
 });
 
 describe('DiskMonitor healthCheck() ioErrors 检查', () => {

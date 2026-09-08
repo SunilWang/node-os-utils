@@ -205,6 +205,28 @@ describe('CommandExecutor Unit Tests', function() {
         expect(error.code).to.equal(ErrorCode.TIMEOUT)
       }
     })
+
+    it('POSIX 超时后应终止管道中的子进程', async function() {
+      if (process.platform === 'win32') this.skip()
+      this.timeout(5000)
+
+      const script = 'console.log(process.pid);setInterval(() => {}, 1000)'
+      const command = `${executor.buildCommand(process.execPath, ['-e', script])} | cat`
+
+      try {
+        await executor.executeStream(command, () => undefined, { timeout: 300 })
+        expect.fail('应该抛出超时错误')
+      } catch (error: any) {
+        expect(error).to.be.instanceOf(MonitorError)
+        expect(error.code).to.equal(ErrorCode.TIMEOUT)
+
+        const descendantPid = Number(String(error.details.stdout).trim())
+        expect(descendantPid).to.be.a('number').and.greaterThan(0)
+
+        await new Promise(resolve => setTimeout(resolve, 100))
+        expect(() => process.kill(descendantPid, 0)).to.throw()
+      }
+    })
   })
 
   describe('env 选项深合并', function() {

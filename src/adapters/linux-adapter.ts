@@ -1252,8 +1252,8 @@ export class LinuxAdapter extends BasePlatformAdapter {
       const fields = line.trim().split(/\s+/);
       if (fields.length >= 6) {
         mounts.push({
-          device: fields[0],
-          mountPoint: fields[1],
+          device: this.decodeMountField(fields[0]),
+          mountPoint: this.decodeMountField(fields[1]),
           filesystem: fields[2],
           options: fields[3].split(','),
           dump: this.safeParseInt(fields[4]),
@@ -1263,6 +1263,18 @@ export class LinuxAdapter extends BasePlatformAdapter {
     }
 
     return mounts;
+  }
+
+  /**
+   * 解码 /proc/mounts 对空格、制表符、换行和反斜杠使用的三位八进制转义。
+   *
+   * @param value /proc/mounts 中的原始字段
+   * @returns 可直接传给文件系统 API 的真实路径或设备名
+   */
+  private decodeMountField(value: string): string {
+    return value.replace(/\\([0-7]{3})/g, (_match, octal: string) =>
+      String.fromCharCode(parseInt(octal, 8))
+    );
   }
 
   private parseFileSystems(output: string): any[] {

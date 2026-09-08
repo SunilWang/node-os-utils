@@ -695,7 +695,8 @@ export class WindowsAdapter extends BasePlatformAdapter {
     }
 
     // PowerShell 5.1：\/Date(1704110400000)\/，时间戳本身已是 UTC 毫秒
-    const jsonDateMatch = value.match(/\\\/Date\((\d+)\)\\\//);
+    // JSON.parse 会把 \/ 还原成 /；同时兼容直接传入尚未反序列化的转义文本。
+    const jsonDateMatch = value.match(/^\\?\/Date\((-?\d+)(?:[+-]\d+)?\)\\?\/$/);
     if (jsonDateMatch) {
       return Number(jsonDateMatch[1]);
     }

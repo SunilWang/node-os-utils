@@ -16,6 +16,10 @@ describe('WindowsAdapter 内部行为', () => {
   it('应解析 PowerShell 5.1 ConvertTo-Json 的 \\/Date(毫秒)\\/ 格式', () => {
     const adapter = new WindowsAdapter();
     const parse = (adapter as any).parseWmiDate.bind(adapter);
+    const creationDate = JSON.parse('{"CreationDate":"\\/Date(1704110400000)\\/"}').CreationDate;
+
+    expect(creationDate).to.equal('/Date(1704110400000)/');
+    expect(parse(creationDate)).to.equal(1704110400000);
     expect(parse('\\/Date(1704110400000)\\/')).to.equal(1704110400000);
   });
 

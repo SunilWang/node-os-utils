@@ -198,8 +198,14 @@ export class CommandExecutor {
       return;
     }
 
+    if (pid === undefined) {
+      return;
+    }
+
     try {
-      child.kill('SIGTERM');
+      // executeStream 在 POSIX 上将 shell 放入独立进程组，负 PID 可同时终止
+      // shell、管道进程及其后代，避免只杀 shell 后留下孤儿进程。
+      process.kill(-pid, 'SIGTERM');
     } catch {
       // 进程已退出时忽略错误
     }
@@ -207,7 +213,7 @@ export class CommandExecutor {
     // 1 秒后仍未退出则 SIGKILL 兜底；unref 避免该定时器阻止进程退出
     const forceKillTimer = setTimeout(() => {
       try {
-        child.kill('SIGKILL');
+        process.kill(-pid, 'SIGKILL');
       } catch {
         // 进程已退出时忽略错误
       }
@@ -286,7 +292,9 @@ export class CommandExecutor {
         shell: mergedOptions.shell,
         env: mergedOptions.env,
         cwd: mergedOptions.cwd,
-        timeout: mergedOptions.timeout
+        timeout: mergedOptions.timeout,
+        // POSIX 独立进程组用于超时时终止整棵进程树；Windows 使用 taskkill /T。
+        detached: process.platform !== 'win32'
       };
 
       let child: ReturnType<typeof spawn>;

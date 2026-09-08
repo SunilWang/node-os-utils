@@ -458,4 +458,16 @@ describe('LinuxAdapter 内部解析逻辑', () => {
     expect(results[0].foreignAddress).to.equal('0.0.0.0:*');
     expect(commands).to.deep.equal(['ss -tuln', 'netstat -tuln']);
   });
+
+  it('应解码 /proc/mounts 中的八进制路径转义', () => {
+    const adapter = new LinuxAdapter();
+    const internal = adapter as any;
+    const mounts = internal.parseMounts(
+      '/dev/disk\\040name /mnt/My\\040Disk\\134backup ext4 rw 0 0\n'
+    );
+
+    expect(mounts).to.have.lengthOf(1);
+    expect(mounts[0].device).to.equal('/dev/disk name');
+    expect(mounts[0].mountPoint).to.equal('/mnt/My Disk\\backup');
+  });
 });
