@@ -1319,12 +1319,6 @@ const config = {
 4. **Resource Usage**: Monitor your monitoring - avoid excessive polling
 5. **Real-time Monitoring**: Use subscriptions for continuous monitoring needs
 
-## 🔗 Related Projects
-
-- [systeminformation](https://github.com/sebhildebrandt/systeminformation) - Alternative system information library
-- [node-machine-id](https://github.com/automation-stack/node-machine-id) - Unique machine identification
-- [cpu-features](https://github.com/mscdex/cpu-features) - CPU feature detection
-
 ## 🦕 Deno Compatibility
 
 `node-os-utils` works under Deno's Node.js compatibility layer (`deno run --node-modules-dir`). When Deno's compat layer cannot execute native shell commands (e.g. PowerShell on Windows), the library **degrades gracefully** rather than throwing:

@@ -1321,12 +1321,6 @@ const config = {
 4. **资源使用**: 监控您的监控 - 避免过度轮询
 5. **实时监控**: 对于持续监控需求使用订阅
 
-## 🔗 相关项目
-
-- [systeminformation](https://github.com/sebhildebrandt/systeminformation) - 替代系统信息库
-- [node-machine-id](https://github.com/automation-stack/node-machine-id) - 唯一机器标识
-- [cpu-features](https://github.com/mscdex/cpu-features) - CPU 特性检测
-
 ## 🦕 Deno 兼容性
 
 `node-os-utils` 支持在 Deno 的 Node.js 兼容层（`deno run --node-modules-dir`）下运行。当 Deno 的兼容层无法执行原生 shell 命令（如 Windows 上的 PowerShell），库会**优雅降级**而非抛出异常：
