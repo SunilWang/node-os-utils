@@ -16,6 +16,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  runtime-node12:
+    name: Published runtime / Node.js 12.22.0
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup build Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack published artifact
+        id: package
+        shell: bash
+        run: echo "file=$(npm pack --ignore-scripts --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup minimum runtime Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '12.22.0'
+
+      - name: Verify published runtime
+        shell: bash
+        run: |
+          consumer_dir=$(mktemp -d)
+          cd "$consumer_dir"
+          npm init --yes --silent
+          npm install "$GITHUB_WORKSPACE/${{ steps.package.outputs.file }}" --engine-strict --ignore-scripts --no-audit --no-fund
+          node -e "const { createOSUtils } = require('node-os-utils'); const instance = createOSUtils({ cacheEnabled: false }); Promise.all([instance.disk.info(), instance.overview()]).then(([disk, overview]) => { if (!disk.success) throw disk.error; if (!overview || !overview.platform) throw new Error('Overview runtime smoke test failed'); instance.destroy(); console.log('CommonJS runtime smoke test passed'); }).catch(error => { instance.destroy(); console.error(error); process.exitCode = 1; });"
+          node --input-type=module -e "import OSUtils, { createOSUtils } from 'node-os-utils'; if (typeof OSUtils !== 'function' || typeof createOSUtils !== 'function') throw new Error('ESM runtime smoke test failed'); const instance = createOSUtils(); instance.destroy(); console.log('ESM runtime smoke test passed');"
+
   test:
     name: ${{ matrix.os }} / Node.js ${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
@@ -25,7 +65,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node-version: ['18', '20', '22']
+        node-version: ['20', '22', '24']
 
     steps:
       - name: Checkout

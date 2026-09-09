@@ -5,6 +5,7 @@ import path from 'path';
 
 import { MacOSAdapter } from '../../../src/adapters/macos-adapter';
 import { MonitorError, ErrorCode } from '../../../src/types/errors';
+import { removePathSync } from '../utils/remove-path';
 
 describe('MacOSAdapter 内部解析逻辑', () => {
   it('应当将 RSS 转换为字节并保留内存百分比', () => {
@@ -355,7 +356,7 @@ describe('MacOSAdapter 内部解析逻辑', () => {
       expect(monitorError.details.path).to.equal(tmpPath);
     } finally {
       fsSync.chmodSync(tmpPath, 0o600);
-      fsSync.rmSync(tmpPath, { force: true });
+      removePathSync(tmpPath, { force: true });
     }
   });
 
@@ -386,8 +387,8 @@ describe('MacOSAdapter 内部解析逻辑', () => {
       expect(await adapter.fileExists(tmpDirectory)).to.be.true;
       expect(await adapter.fileExists('/nonexistent/path/to/file')).to.be.false;
     } finally {
-      fsSync.rmSync(tmpPath, { force: true });
-      fsSync.rmSync(tmpDirectory, { recursive: true, force: true });
+      removePathSync(tmpPath, { force: true });
+      removePathSync(tmpDirectory, { recursive: true, force: true });
     }
   });
 

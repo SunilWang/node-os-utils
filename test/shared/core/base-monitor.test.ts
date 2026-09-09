@@ -89,7 +89,7 @@ class TestMonitor extends BaseMonitor<{ value: number }> {
   async slowCachedOperation(delayMs: number) {
     return this.executeWithCache('slow', async () => {
       this.callCount += 1;
-      await new Promise(resolve => setTimeout(resolve, delayMs));
+      await new Promise<void>(resolve => setTimeout(resolve, delayMs));
       return { value: this.callCount };
     }, 50);
   }
@@ -97,7 +97,7 @@ class TestMonitor extends BaseMonitor<{ value: number }> {
   async timeoutOperation(delayMs: number) {
     return this.executeWithCache('timeout-test', async () => {
       this.callCount += 1;
-      await new Promise(resolve => setTimeout(resolve, delayMs));
+      await new Promise<void>(resolve => setTimeout(resolve, delayMs));
       return { value: this.callCount };
     }, 50);
   }

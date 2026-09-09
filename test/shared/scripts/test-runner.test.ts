@@ -4,6 +4,8 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
+import { removePathSync } from '../utils/remove-path'
+
 interface RunnerFixture {
   root: string
   scriptPath: string
@@ -50,7 +52,7 @@ function addRunnableCompiledTest(root: string): void {
 describe('test-runner', function() {
   afterEach(function() {
     for (const target of temporaryPaths.splice(0)) {
-      fs.rmSync(target, { recursive: true, force: true })
+      removePathSync(target, { recursive: true, force: true })
     }
   })
 

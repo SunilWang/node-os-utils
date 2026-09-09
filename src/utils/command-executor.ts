@@ -558,35 +558,28 @@ export class CommandExecutor {
   }
 
   /**
-   * 带超时执行命令
+   * 使用 child_process.exec 的原生超时能力执行命令。
+   *
+   * @param command 待执行的命令字符串
+   * @param options 命令执行选项，其中 timeout 控制超时时间
+   * @returns 命令的标准输出与标准错误
+   * @throws 命令失败、输出溢出或超时时抛出 child_process 原始错误
    */
   private async executeWithTimeout(command: string, options: ExecuteOptions): Promise<any> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), options.timeout || 10000);
+    const execOptions: any = { ...options };
 
-    try {
-      const execOptions: any = {
-        ...options,
-        signal: controller.signal
-      };
-
-      // 确保 shell 选项在不同平台下正确设置
-      if (execOptions.shell === true) {
-        if (process.platform === 'win32') {
-          execOptions.shell = process.env.ComSpec || 'cmd.exe';
-        } else {
-          // 尝试使用当前 SHELL，若不存在再回退到常见 POSIX shell
-          const fallbackShells = [process.env.SHELL, '/bin/bash', '/bin/sh'];
-          execOptions.shell = fallbackShells.find(Boolean);
-        }
+    // 确保 shell 选项在不同平台下正确设置
+    if (execOptions.shell === true) {
+      if (process.platform === 'win32') {
+        execOptions.shell = process.env.ComSpec || 'cmd.exe';
+      } else {
+        // 尝试使用当前 SHELL，若不存在再回退到常见 POSIX shell
+        const fallbackShells = [process.env.SHELL, '/bin/bash', '/bin/sh'];
+        execOptions.shell = fallbackShells.find(Boolean);
       }
-
-      const result = await execAsync(command, execOptions);
-      clearTimeout(timeoutId);
-      return result;
-    } catch (error) {
-      clearTimeout(timeoutId);
-      throw error;
     }
+
+    // exec 自 Node.js 早期版本即原生支持 timeout，无需依赖较新的 AbortController。
+    return execAsync(command, execOptions);
   }
 }

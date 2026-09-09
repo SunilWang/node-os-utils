@@ -1,12 +1,13 @@
 import { expect } from 'chai';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, writeFileSync } from 'fs';
 import * as path from 'path';
 
 import OSUtils, { OSUtils as OSUtilsClass, createOSUtils } from '../../src/index';
 import { AdapterFactory } from '../../src/adapters/adapter-factory';
 import { PlatformAdapter, CommandResult } from '../../src/types/platform';
 import { DataSize } from '../../src/types/common';
+import { removePathSync } from './utils/remove-path';
 
 function createAdapterStub(): PlatformAdapter {
   return {
@@ -126,7 +127,7 @@ function compilePackageEntryTypeFixtures(packageRoot: string): void {
       commonjsFixture
     ], { cwd: packageRoot, stdio: 'inherit' });
   } finally {
-    rmSync(fixtureDir, { recursive: true, force: true });
+    removePathSync(fixtureDir, { recursive: true, force: true });
   }
 }
 

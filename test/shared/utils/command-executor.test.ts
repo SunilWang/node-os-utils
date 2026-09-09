@@ -301,7 +301,7 @@ describe('CommandExecutor Unit Tests', function() {
         const descendantPid = Number(String(error.details.stdout).trim())
         expect(descendantPid).to.be.a('number').and.greaterThan(0)
 
-        await new Promise(resolve => setTimeout(resolve, 100))
+        await new Promise<void>(resolve => setTimeout(resolve, 100))
         expect(() => process.kill(descendantPid, 0)).to.throw()
       }
     })

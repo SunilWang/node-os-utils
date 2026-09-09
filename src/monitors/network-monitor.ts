@@ -148,7 +148,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
       }
 
       // 等待指定间隔
-      await new Promise(resolve => setTimeout(resolve, interval));
+      await new Promise<void>(resolve => setTimeout(resolve, interval));
 
       // 第二次测量
       const secondStatsResult = await this.statsAsync({ skipCache: true });

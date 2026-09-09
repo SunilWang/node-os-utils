@@ -800,6 +800,6 @@ export class WindowsAdapter extends BasePlatformAdapter {
    * Promise 形式的延时工具
    */
   private async delay(ms: number): Promise<void> {
-    await new Promise(resolve => setTimeout(resolve, ms));
+    await new Promise<void>(resolve => setTimeout(resolve, ms));
   }
 }

@@ -1,16 +1,23 @@
-# node-os-utils v3.0
+# node-os-utils v3.1.0
 
 [![NPM Version][npm-image]][npm-url]
 [![NPM Downloads][downloads-image]][downloads-url]
 [![TypeScript Support](https://img.shields.io/badge/typescript-supported-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D12.22.0-brightgreen.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-🚀 **Version 3.0** - A safer and more accurate evolution of the 2.x API, with focused compatibility changes where the previous behavior could return misleading data or affect unintended processes.
+🚀 **Version 3.1.0** - Builds on v3.0's security, data-accuracy, and focused legacy-behavior improvements while preserving the zero-dependency package and the v3 API, broadening Node.js runtime compatibility, and modernizing the development security toolchain.
 
 **Modern, TypeScript-native, cross-platform system monitoring library** providing comprehensive system information with intelligent caching, event-driven monitoring, and robust error handling.
 
 > **Upgrade notice**: Version 3.0 contains targeted breaking changes from 2.x. See [Migration from v2.x to v3.0](#-migration-from-v2x-to-v30) before upgrading.
+
+## ✨ What's New in v3.1.0
+
+- **Broader Runtime Support**: The published package now supports Node.js 12.22.0 and later
+- **CommonJS and Native ESM**: Package-root imports are verified in both module systems on the minimum supported runtime
+- **Zero Runtime Dependencies**: Development-tool upgrades do not add dependencies to the published package
+- **Release Validation**: CI builds with Node.js 20.20.2 and tests the real npm tarball on exact Node.js 12.22.0
 
 ## ✨ What's New in v3.0
 
@@ -88,7 +95,8 @@ npm install node-os-utils
 ```
 
 **Requirements:**
-- Node.js 18.0.0 or higher
+- Runtime: Node.js 12.22.0 or higher
+- Repository development and testing: use the Node.js 20.20.2 version pinned by `.node-version` (the toolchain requires `^20.19.0 || >=22.12.0`)
 - Supported OS: Linux, macOS, Windows
 
 ## 🏁 Quick Start
@@ -949,7 +957,6 @@ Version 3.0 preserves the package entry point and core monitor APIs, but tighten
 ### What Stays the Same
 
 - Standard package-root imports remain unchanged: `import { OSUtils } from 'node-os-utils'` and CommonJS `require('node-os-utils')` continue to work.
-- The minimum supported runtime remains Node.js 18.0.0.
 - Monitor names and the `MonitorResult<T>` success/failure pattern remain unchanged for normal calls.
 
 ### 1. Process and User Times Are Optional

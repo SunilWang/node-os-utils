@@ -1,16 +1,23 @@
-# node-os-utils v3.0
+# node-os-utils v3.1.0
 
 [![NPM 版本][npm-image]][npm-url]
 [![NPM 下载量][downloads-image]][downloads-url]
 [![TypeScript 支持](https://img.shields.io/badge/typescript-supported-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js 版本](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
+[![Node.js 版本](https://img.shields.io/badge/node-%3E%3D12.22.0-brightgreen.svg)](https://nodejs.org/)
 [![许可证: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-🚀 **版本 3.0** - 在 2.x API 基础上进一步提升安全性与数据准确性，并针对可能返回误导数据或影响非预期进程的旧行为引入了少量兼容性变更。
+🚀 **版本 3.1.0** - 在 v3.0 针对 2.x API 提升安全性与数据准确性、修正少量可能产生误导数据或影响非预期进程的旧行为基础上，继续保持零运行时依赖和 v3 API 不变，同时扩展 Node.js 运行时兼容范围并更新开发安全工具链。
 
 **现代化的、TypeScript 原生的跨平台系统监控库**，提供全面的系统信息收集功能，具备智能缓存、事件驱动监控和强大的错误处理机制。
 
 > **升级提示**：版本 3.0 包含针对 2.x 的定向破坏性变更。升级前请阅读[从 v2.x 迁移到 v3.0](#-从-v2x-迁移到-v30)。
+
+## ✨ v3.1.0 新特性
+
+- **更广的运行时支持**：发布包现在支持 Node.js 12.22.0 及以上版本
+- **CommonJS 与原生 ESM**：已在最低支持版本验证两种模块系统的包根导入
+- **零运行时依赖**：开发工具升级不会给发布包增加运行时依赖
+- **发布验证**：CI 使用 Node.js 20.20.2 构建，并在精确的 Node.js 12.22.0 上验证真实 npm tarball
 
 ## ✨ v3.0 新特性
 
@@ -88,7 +95,8 @@ npm install node-os-utils
 ```
 
 **系统要求:**
-- Node.js 18.0.0 或更高版本
+- 运行时：Node.js 12.22.0 或更高版本
+- 仓库开发和测试：使用 `.node-version` 固定的 Node.js 20.20.2（工具链要求 `^20.19.0 || >=22.12.0`）
 - 支持的操作系统: Linux、macOS、Windows
 
 ## 🏁 快速开始
@@ -951,7 +959,6 @@ class SystemMonitoringService {
 ### 保持不变的部分
 
 - 标准包根导入方式不变：`import { OSUtils } from 'node-os-utils'` 和 CommonJS `require('node-os-utils')` 仍然可用。
-- 最低支持的运行时仍为 Node.js 18.0.0。
 - 常规调用中的监控器名称以及 `MonitorResult<T>` 成功/失败返回模式保持不变。
 
 ### 1. 进程和用户时间改为可选字段

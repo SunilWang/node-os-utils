@@ -1,5 +1,5 @@
 /**
- * node-os-utils v3.0.0
+ * node-os-utils v3.1.0
  *
  * 现代化的跨平台操作系统监控工具库
  * TypeScript 重构版本，提供全面的系统监控功能
