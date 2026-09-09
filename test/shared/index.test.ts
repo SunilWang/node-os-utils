@@ -1,4 +1,7 @@
 import { expect } from 'chai';
+import { execFileSync } from 'child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import * as path from 'path';
 
 import OSUtils, { OSUtils as OSUtilsClass, createOSUtils } from '../../src/index';
 import { AdapterFactory } from '../../src/adapters/adapter-factory';
@@ -64,6 +67,67 @@ function makeSuccessResult<T>(data: T) {
     cached: false,
     platform: 'test'
   };
+}
+
+/**
+ * 使用 NodeNext 编译真实包入口的 ESM 与 CommonJS 类型消费用例。
+ *
+ * @param packageRoot 包根目录
+ * @returns 无返回值
+ * @throws TypeScript 声明或包导出条件不兼容时抛出编译错误
+ */
+function compilePackageEntryTypeFixtures(packageRoot: string): void {
+  const fixtureDir = mkdtempSync(path.join(packageRoot, '.entry-types-'));
+  const esmFixture = path.join(fixtureDir, 'consumer.mts');
+  const commonjsFixture = path.join(fixtureDir, 'consumer.cts');
+
+  try {
+    writeFileSync(esmFixture, `
+      import DefaultOSUtils, {
+        OSUtils as NamedOSUtils,
+        DataSize,
+        createOSUtils,
+        type GlobalConfig,
+        type MonitorResult
+      } from 'node-os-utils';
+
+      const constructor: typeof NamedOSUtils = DefaultOSUtils;
+      const config: Partial<GlobalConfig> = {};
+      const instance: NamedOSUtils = createOSUtils(config);
+      const size = new DataSize(1);
+      const result = undefined as unknown as MonitorResult<number>;
+      void constructor;
+      void instance;
+      void size;
+      void result;
+    `);
+    writeFileSync(commonjsFixture, `
+      import packageEntry = require('node-os-utils');
+
+      const constructor: typeof packageEntry.OSUtils = packageEntry.default;
+      const instance: packageEntry.OSUtils = packageEntry.createOSUtils();
+      void constructor;
+      void instance;
+    `);
+
+    const tscEntry = require.resolve('typescript/bin/tsc');
+    execFileSync(process.execPath, [
+      tscEntry,
+      '--noEmit',
+      '--strict',
+      '--skipLibCheck',
+      '--target',
+      'ES2020',
+      '--module',
+      'NodeNext',
+      '--moduleResolution',
+      'NodeNext',
+      esmFixture,
+      commonjsFixture
+    ], { cwd: packageRoot, stdio: 'inherit' });
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
 }
 
 describe('OSUtils 入口类', () => {
@@ -210,5 +274,46 @@ describe('OSUtils 入口类', () => {
     const instance = createOSUtils({ platform: 'test', debug: true });
     expect(instance).to.be.instanceOf(OSUtilsClass);
     expect(OSUtils).to.equal(OSUtilsClass);
+  });
+});
+
+describe('包入口兼容性', () => {
+  it('原生 ESM 默认导出应为 OSUtils，且命名导出与 CommonJS 一致', () => {
+    const packageRoot = path.resolve(__dirname, '../../..');
+    const requireAnchor = JSON.stringify(path.join(packageRoot, 'package.json'));
+    const script = `
+      import assert from 'node:assert/strict';
+      import defaultExport, * as esmPackage from 'node-os-utils';
+      import { createRequire } from 'node:module';
+
+      const require = createRequire(${requireAnchor});
+      const commonjsPackage = require('node-os-utils');
+      const commonjsNames = Object.keys(commonjsPackage)
+        .filter((key) => key !== 'default')
+        .sort();
+      const esmNames = Object.keys(esmPackage)
+        .filter((key) => key !== 'default')
+        .sort();
+
+      assert.equal(defaultExport, esmPackage.OSUtils);
+      assert.equal(commonjsPackage.default, commonjsPackage.OSUtils);
+      assert.deepEqual(esmNames, commonjsNames);
+      assert.equal(typeof esmPackage.createOSUtils, 'function');
+      console.log('ok');
+    `;
+
+    const output = execFileSync(
+      process.execPath,
+      ['--input-type=module', '--eval', script],
+      { cwd: packageRoot, encoding: 'utf8' }
+    );
+
+    expect(output.trim()).to.equal('ok');
+  });
+
+  it('NodeNext 应为 ESM 与 CommonJS 提供匹配的入口类型', () => {
+    const packageRoot = path.resolve(__dirname, '../../..');
+
+    compilePackageEntryTypeFixtures(packageRoot);
   });
 });

@@ -1,4 +1,4 @@
-# node-os-utils v2.0
+# node-os-utils v3.0
 
 [![NPM Version][npm-image]][npm-url]
 [![NPM Downloads][downloads-image]][downloads-url]
@@ -6,22 +6,21 @@
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-🚀 **Version 2.0** - A complete rewrite of the popular Node.js operating system monitoring library.
+🚀 **Version 3.0** - A safer and more accurate evolution of the 2.x API, with focused compatibility changes where the previous behavior could return misleading data or affect unintended processes.
 
 **Modern, TypeScript-native, cross-platform system monitoring library** providing comprehensive system information with intelligent caching, event-driven monitoring, and robust error handling.
 
-> **Breaking Changes**: This is a major version release with breaking changes from v1.x.
+> **Upgrade notice**: Version 3.0 contains targeted breaking changes from 2.x. See [Migration from v2.x to v3.0](#-migration-from-v2x-to-v30) before upgrading.
 
-## ✨ What's New in v2.0
+## ✨ What's New in v3.0
 
-### 🎯 Core Improvements
-- **🔧 TypeScript First**: Complete rewrite in TypeScript with strict typing
-- **🏗️ Modern Architecture**: Clean, modular design with adapter pattern
-- **⚡ Performance Optimized**: Intelligent caching system with TTL management
-- **🛡️ Robust Error Handling**: Consistent error handling with detailed error codes
-- **🔄 Event-Driven**: Real-time monitoring with subscription management
-- **📊 Rich Data Types**: Comprehensive data structures with unit conversions
-- **📆 Timeline Aware**: System info now exposes `bootTime` & `uptimeSeconds`, and Linux process metrics include precise `startTime`
+### 🎯 Reliability Improvements
+- **⏱️ Truthful Process Timing**: Unavailable `startTime`, `runtime`, and user `loginTime` values are reported as `undefined` instead of fabricated timestamps
+- **🛡️ Safer Process Signalling**: Process termination only accepts positive safe-integer PIDs, preventing accidental process-group signals
+- **⚙️ Predictable Configuration**: Disabling system information now consistently affects `info()` and `overview()`
+- **📊 Valid Data Sizes**: `DataSize` rejects non-finite values before they can propagate through calculations
+- **🌍 Cross-Platform Accuracy**: More robust parsing, error reporting, and health checks across Linux, macOS, and Windows
+- **⚡ Resilient Execution**: Improved command timeouts and failure handling prevent monitoring operations from becoming a source of instability
 
 ### 🌟 Key Features
 - **🌍 Cross-Platform**: Linux, macOS, Windows support with intelligent platform adaptation
@@ -943,7 +942,96 @@ class SystemMonitoringService {
 }
 ```
 
-## 🔄 Migration from v1.x
+## 🔄 Migration from v2.x to v3.0
+
+Version 3.0 preserves the package entry point and core monitor APIs, but tightens several contracts that previously exposed misleading values or unsafe behavior. Review the following changes before upgrading.
+
+### What Stays the Same
+
+- Standard package-root imports remain unchanged: `import { OSUtils } from 'node-os-utils'` and CommonJS `require('node-os-utils')` continue to work.
+- The minimum supported runtime remains Node.js 18.0.0.
+- Monitor names and the `MonitorResult<T>` success/failure pattern remain unchanged for normal calls.
+
+### 1. Process and User Times Are Optional
+
+`ProcessInfo.startTime`, `ProcessInfo.runtime`, and the `loginTime` returned by `system.users()` are now optional. When the operating system omits a timestamp or it cannot be parsed, v3.0 returns `undefined` instead of substituting the current time.
+
+```typescript
+const processResult = await osutils.process.byPid(pid);
+if (processResult.success && processResult.data) {
+  const { startTime, runtime } = processResult.data;
+
+  if (startTime !== undefined) {
+    console.log('Started at:', new Date(startTime));
+  }
+  if (runtime !== undefined) {
+    console.log('Runtime:', runtime);
+  }
+}
+
+const usersResult = await osutils.system.users();
+if (usersResult.success) {
+  for (const user of usersResult.data) {
+    if (user.loginTime !== undefined) {
+      console.log(user.username, new Date(user.loginTime));
+    }
+  }
+}
+```
+
+Update TypeScript consumers to narrow these fields before calling numeric or date methods.
+
+### 2. Process Termination Requires a Positive PID
+
+`process.kill()` now accepts only positive safe-integer PIDs. PID `0`, negative process-group IDs, non-integers, and unsafe integers are rejected with a successful `MonitorResult` whose `data` is `false`; they are no longer forwarded to the operating system.
+
+```typescript
+if (!Number.isSafeInteger(pid) || pid <= 0) {
+  throw new TypeError('pid must be a positive safe integer');
+}
+
+const killResult = await osutils.process.kill(pid, 'SIGTERM');
+if (!killResult.success || !killResult.data) {
+  // Handle a failed or rejected termination request.
+}
+```
+
+If an application intentionally signals Unix process groups, keep that platform-specific behavior outside this library and guard it explicitly.
+
+### 3. Disabling System Information Is Enforced
+
+After setting `system.includeSystemInfo` to `false`, or calling `withSystemInfo(false)`, `system.info()` returns a failed `MonitorResult`. `system.overview()` remains available, but reports `unknown` for `data.system.hostname` and `data.system.platform`.
+
+Keep `includeSystemInfo` enabled (the default) when either value is required:
+
+```typescript
+const osutils = new OSUtils({
+  system: { includeSystemInfo: true }
+});
+```
+
+### 4. `DataSize` Rejects Non-Finite Values
+
+`new DataSize(NaN)`, `new DataSize(Infinity)`, and `new DataSize(-Infinity)` now throw. Validate externally supplied values before construction:
+
+```typescript
+import { DataSize } from 'node-os-utils';
+
+if (!Number.isFinite(bytes)) {
+  throw new TypeError('bytes must be finite');
+}
+const size = new DataSize(bytes);
+```
+
+### v3.0 Migration Checklist
+
+- [ ] Narrow `startTime`, `runtime`, and `loginTime` before using them
+- [ ] Replace calls that pass PID `0` or a negative process-group ID to `process.kill()`
+- [ ] Confirm that callers disabling `includeSystemInfo` handle a failed `info()` result and `unknown` overview fields
+- [ ] Validate values passed to `DataSize`
+- [ ] Run the application test suite on every supported operating system
+
+## 🔄 Migration from v1.x to v2.0
 
 ### Breaking Changes
 

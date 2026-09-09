@@ -7,9 +7,14 @@
   "types": "dist/src/index.d.ts",
   "exports": {
     ".": {
-      "require": "./dist/src/index.js",
-      "import": "./dist/src/index.js",
-      "types": "./dist/src/index.d.ts"
+      "import": {
+        "types": "./dist/src/esm-entry.d.mts",
+        "default": "./dist/src/esm-entry.mjs"
+      },
+      "require": {
+        "types": "./dist/src/index.d.ts",
+        "default": "./dist/src/index.js"
+      }
     }
   },
   "files": [
@@ -36,8 +41,8 @@
     "test:windows": "npm run build && node scripts/test-runner.js windows",
     "test:coverage": "npm run build && nyc node scripts/test-runner.js all",
     "test:coverage-platform": "npm run build && nyc node scripts/test-runner.js platform",
-    "lint": "eslint src test --ext .ts --fix",
-    "lint:check": "eslint src test --ext .ts",
+    "lint": "eslint src test --ext .ts,.mts --fix",
+    "lint:check": "eslint src test --ext .ts,.mts",
     "docs": "typedoc src --out docs",
     "publish:beta": "npm publish --tag beta",
     "version:beta": "npm version prerelease --preid=beta",

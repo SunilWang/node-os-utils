@@ -1,4 +1,4 @@
-# node-os-utils v2.0
+# node-os-utils v3.0
 
 [![NPM 版本][npm-image]][npm-url]
 [![NPM 下载量][downloads-image]][downloads-url]
@@ -6,22 +6,21 @@
 [![Node.js 版本](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
 [![许可证: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-🚀 **版本 2.0** - 流行的 Node.js 操作系统监控库的完全重写版本。
+🚀 **版本 3.0** - 在 2.x API 基础上进一步提升安全性与数据准确性，并针对可能返回误导数据或影响非预期进程的旧行为引入了少量兼容性变更。
 
 **现代化的、TypeScript 原生的跨平台系统监控库**，提供全面的系统信息收集功能，具备智能缓存、事件驱动监控和强大的错误处理机制。
 
-> **重大变更**: 这是一个包含破坏性变更的主要版本发布，与 v1.x 不兼容。
+> **升级提示**：版本 3.0 包含针对 2.x 的定向破坏性变更。升级前请阅读[从 v2.x 迁移到 v3.0](#-从-v2x-迁移到-v30)。
 
-## ✨ v2.0 新特性
+## ✨ v3.0 新特性
 
-### 🎯 核心改进
-- **🔧 TypeScript 优先**: 使用严格类型的完全重写版本
-- **🏗️ 现代架构**: 使用适配器模式的清洁、模块化设计
-- **⚡ 性能优化**: 带 TTL 管理的智能缓存系统
-- **🛡️ 强大错误处理**: 具有详细错误码的一致错误处理
-- **🔄 事件驱动**: 具有订阅管理的实时监控
-- **📊 丰富数据类型**: 具有单位转换的全面数据结构
-- **📆 时间线可追溯**: 系统信息新增 `bootTime` / `uptimeSeconds` 字段，Linux 进程指标补充精确的 `startTime`
+### 🎯 可靠性改进
+- **⏱️ 真实的进程时间**：无法获取的 `startTime`、`runtime` 和用户 `loginTime` 将返回 `undefined`，不再生成伪造时间戳
+- **🛡️ 更安全的进程信号**：终止进程时仅接受正安全整数 PID，防止意外向进程组发送信号
+- **⚙️ 可预期的配置语义**：禁用系统基本信息后，`info()` 和 `overview()` 的行为现在保持一致
+- **📊 合法的数据大小**：`DataSize` 会拒绝非有限数，防止异常值继续参与计算
+- **🌍 更准确的跨平台数据**：改进 Linux、macOS 和 Windows 上的解析、错误报告与健康检查
+- **⚡ 更稳定的命令执行**：改进超时和失败处理，避免监控操作自身成为稳定性风险
 
 ### 🌟 关键特性
 - **🌍 跨平台**: Linux、macOS、Windows 支持，具有智能平台适配
@@ -945,7 +944,96 @@ class SystemMonitoringService {
 }
 ```
 
-## 🔄 从 v1.x 迁移到 2.0
+## 🔄 从 v2.x 迁移到 v3.0
+
+版本 3.0 保留了原有的包入口和核心监控 API，但收紧了几项会暴露误导值或不安全行为的旧契约。升级前请检查以下变更。
+
+### 保持不变的部分
+
+- 标准包根导入方式不变：`import { OSUtils } from 'node-os-utils'` 和 CommonJS `require('node-os-utils')` 仍然可用。
+- 最低支持的运行时仍为 Node.js 18.0.0。
+- 常规调用中的监控器名称以及 `MonitorResult<T>` 成功/失败返回模式保持不变。
+
+### 1. 进程和用户时间改为可选字段
+
+`ProcessInfo.startTime`、`ProcessInfo.runtime` 以及 `system.users()` 返回的 `loginTime` 现在都是可选字段。当操作系统未提供时间戳或无法解析时，v3.0 会返回 `undefined`，不再用当前时间替代。
+
+```typescript
+const processResult = await osutils.process.byPid(pid);
+if (processResult.success && processResult.data) {
+  const { startTime, runtime } = processResult.data;
+
+  if (startTime !== undefined) {
+    console.log('启动时间:', new Date(startTime));
+  }
+  if (runtime !== undefined) {
+    console.log('运行时长:', runtime);
+  }
+}
+
+const usersResult = await osutils.system.users();
+if (usersResult.success) {
+  for (const user of usersResult.data) {
+    if (user.loginTime !== undefined) {
+      console.log(user.username, new Date(user.loginTime));
+    }
+  }
+}
+```
+
+TypeScript 调用方必须先收窄这些字段的类型，再调用数值或日期方法。
+
+### 2. 终止进程时要求传入正 PID
+
+`process.kill()` 现在只接受正安全整数 PID。PID `0`、负进程组 ID、非整数和非安全整数都会被拒绝，返回成功的 `MonitorResult` 且 `data` 为 `false`，不再转发给操作系统。
+
+```typescript
+if (!Number.isSafeInteger(pid) || pid <= 0) {
+  throw new TypeError('pid 必须是正安全整数');
+}
+
+const killResult = await osutils.process.kill(pid, 'SIGTERM');
+if (!killResult.success || !killResult.data) {
+  // 处理终止失败或请求被拒绝的情况。
+}
+```
+
+如果应用确实需要向 Unix 进程组发送信号，请将该平台特定行为放在本库之外，并显式添加平台保护。
+
+### 3. 禁用系统基本信息的配置现在会严格生效
+
+将 `system.includeSystemInfo` 设为 `false`，或调用 `withSystemInfo(false)` 后，`system.info()` 会返回失败的 `MonitorResult`。`system.overview()` 仍然可用，但其 `data.system.hostname` 和 `data.system.platform` 会返回 `unknown`。
+
+如果业务需要上述任一信息，请保持启用 `includeSystemInfo`（默认值）：
+
+```typescript
+const osutils = new OSUtils({
+  system: { includeSystemInfo: true }
+});
+```
+
+### 4. `DataSize` 拒绝非有限数
+
+`new DataSize(NaN)`、`new DataSize(Infinity)` 和 `new DataSize(-Infinity)` 现在都会抛出异常。用外部数据构造实例前应先校验：
+
+```typescript
+import { DataSize } from 'node-os-utils';
+
+if (!Number.isFinite(bytes)) {
+  throw new TypeError('bytes 必须是有限数');
+}
+const size = new DataSize(bytes);
+```
+
+### v3.0 迁移清单
+
+- [ ] 使用 `startTime`、`runtime` 和 `loginTime` 前先收窄类型
+- [ ] 替换向 `process.kill()` 传入 PID `0` 或负进程组 ID 的调用
+- [ ] 确认禁用 `includeSystemInfo` 的调用方能处理 `info()` 失败以及 `overview()` 中的 `unknown` 字段
+- [ ] 校验传入 `DataSize` 的值
+- [ ] 在所有受支持的操作系统上运行应用测试套件
+
+## 🔄 从 v1.x 迁移到 v2.0
 
 ### 重大变更
 

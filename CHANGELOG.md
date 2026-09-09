@@ -12,11 +12,38 @@
   与负 PID 进程组广播语义，避免误终止调用方未明确指定的进程。
 - `SystemMonitor.withSystemInfo(false)` 与 `system.includeSystemInfo: false` 现在会真正禁用
   `system.info()`；系统概览中的主机名与平台会相应降级为 `unknown`。
-- `CommandExecutor.executeStream()` 在 `shell: false` 时要求使用
-  `{ executable, args }` 结构化命令，避免命令字符串拆分破坏空参数、引号和反斜杠。
+- `DataSize` 构造函数现在要求输入为有限数值；2.x 仍可构造的 `NaN` 与正
+  `Infinity` 在 3.0 中会抛出异常，避免非有限数值进入监控结果。
+
+### 从 2.x 迁移
+
+- 读取 `ProcessInfo.startTime`、`ProcessInfo.runtime` 或用户 `loginTime` 前先判断是否为
+  `undefined`，仅在平台确实提供有效时间时进行格式化或计算：
+
+  ```ts
+  const runtimeSeconds = processInfo.runtime === undefined
+    ? undefined
+    : processInfo.runtime / 1000;
+  ```
+
+- `ProcessMonitor.kill()` 仅用于终止单个正 PID 进程。原先传入 `0` 或负 PID 的调用方
+  应改为传入明确的正 PID；确需 POSIX 进程组操作时，应在平台相关代码中显式处理。
+- 若调用方仍需使用 `system.info()` 或在 `overview()` 中读取主机名和平台，请保持
+  `system.includeSystemInfo: true`（默认值），不要调用 `withSystemInfo(false)`；若主动关闭，
+  则需处理 `info()` 的失败 `MonitorResult` 以及概览中的 `unknown`。
+- 构造 `DataSize` 前确保输入满足 `Number.isFinite(value)`；未知数据应保留为
+  `undefined` 或失败结果，不要传入非有限占位值。
+
+### 非公开深路径兼容性
+
+- 内部工具 `CommandExecutor` 未从包根导出，且包的 `exports` 仅承诺根入口。若已有代码
+  通过非官方深路径导入它，`executeStream()` 在 `shell: false` 时需将命令字符串迁移为
+  `{ executable, args }` 结构化命令，以原样保留空参数、引号和反斜杠。
 
 ### 修复
 
+- 修复 Node.js 原生 ESM 默认导入返回 CommonJS 模块对象、与 TypeScript 默认导出声明不一致的问题；
+  新增轻量 ESM 包装入口，同时保持 CommonJS 与全部命名导出不变。
 - 修复缓存 TTL、缓存容量和超时配置为 `0` 时被错误回退到默认值的问题。
 - 修复订阅及监控失败在没有 `error` 监听器时抛出未捕获异常的问题。
 - 修复 Linux 进程名包含空格或右括号时的 `/proc/[pid]/stat` 解析问题。
@@ -55,7 +82,6 @@
 
 - Linux、macOS CPU 信息统一返回 Node.js 标准架构标识。
 - Windows、Linux、macOS 的内存、磁盘、网络资源信息纳入系统概览。
-- `DataSize` 现在拒绝非有限数值，避免产生无效监控结果。
 - Windows 网络接口信息由对象 map 归一化为数组结构，与类型声明及其他平台一致。
 - 返回固定占位值的同步兼容方法（`disk.free`/`disk.used`/`network.inOut`/`network.stats`）
   已标记 `@deprecated`，请迁移到对应的异步方法。
@@ -64,8 +90,8 @@
 
 ### 验证
 
-- 通过 TypeScript 构建、ESLint 检查及完整 `npm test`：388 passing。
-- 其中共享单元测试 248 passing，当前平台契约测试 70 passing，macOS 集成测试 70 passing。
+- 通过 TypeScript 构建、ESLint 检查及完整 `npm test`：390 passing。
+- 其中共享单元测试 250 passing，当前平台契约测试 70 passing，macOS 集成测试 70 passing。
 
 ## [2.0.5] - 2026-09-06
 
