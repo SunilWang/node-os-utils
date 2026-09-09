@@ -1,6 +1,7 @@
 import { PlatformAdapter, CommandResult, SupportedFeatures } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
 import { MonitorError } from '../types/errors';
+import { CommandExecutor } from '../utils/command-executor';
 
 /**
  * 平台适配器抽象基类
@@ -10,9 +11,17 @@ import { MonitorError } from '../types/errors';
 export abstract class BasePlatformAdapter implements PlatformAdapter {
   protected platformName: string;
   protected supportedFeatures: SupportedFeatures;
+  protected readonly executor: CommandExecutor;
 
-  constructor(platformName: string) {
+  /**
+   * 创建平台适配器基类。
+   *
+   * @param platformName 平台标识
+   * @param defaultExecuteOptions 底层系统命令的默认执行选项
+   */
+  constructor(platformName: string, defaultExecuteOptions: ExecuteOptions = {}) {
     this.platformName = platformName;
+    this.executor = new CommandExecutor(platformName, defaultExecuteOptions);
     this.supportedFeatures = this.initializeSupportedFeatures();
   }
 
@@ -49,12 +58,19 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
     return { ...this.supportedFeatures };
   }
 
-  // 抽象方法 - 子类必须实现
-
   /**
-   * 执行系统命令
+   * 使用统一执行器运行系统命令。
+   *
+   * @param command 待执行的命令
+   * @param options 本次命令的覆盖选项
+   * @returns 命令执行结果
+   * @throws {MonitorError} 命令执行失败或超时时抛出
    */
-  abstract executeCommand(command: string, options?: ExecuteOptions): Promise<CommandResult>;
+  async executeCommand(command: string, options?: ExecuteOptions): Promise<CommandResult> {
+    return this.executor.execute(command, options);
+  }
+
+  // 抽象方法 - 子类必须实现
 
   /**
    * 读取文件内容

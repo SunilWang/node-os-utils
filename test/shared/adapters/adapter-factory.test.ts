@@ -118,6 +118,48 @@ describe('AdapterFactory', () => {
     expect(second).to.equal(first);
   });
 
+  it('自定义命令超时应隔离适配器实例并下发执行器默认值', () => {
+    const first = AdapterFactory.create('darwin', { timeout: 15000 });
+    const second = AdapterFactory.create('darwin', { timeout: 15000 });
+    const differentTimeout = AdapterFactory.create('darwin', { timeout: 20000 });
+
+    expect(second).to.not.equal(first);
+    expect(differentTimeout).to.not.equal(first);
+    expect((first as any).executor.getDefaultOptions().timeout).to.equal(15000);
+    expect((second as any).executor.getDefaultOptions().timeout).to.equal(15000);
+    expect((differentTimeout as any).executor.getDefaultOptions().timeout).to.equal(20000);
+  });
+
+  it('自定义执行选项应完整传递给底层执行器', () => {
+    const adapter = AdapterFactory.create('darwin', {
+      timeout: 15000,
+      maxBuffer: 2 * 1024 * 1024,
+      shell: false
+    });
+    const options = (adapter as any).executor.getDefaultOptions();
+
+    expect(options.timeout).to.equal(15000);
+    expect(options.maxBuffer).to.equal(2 * 1024 * 1024);
+    expect(options.shell).to.equal(false);
+  });
+
+  it('省略命令超时应复用显式 10000ms 的默认适配器', () => {
+    const implicitDefault = AdapterFactory.create('darwin');
+    AdapterFactory.create('darwin', { timeout: 15000 });
+    const explicitDefault = AdapterFactory.create('darwin', { timeout: 10000 });
+
+    expect(explicitDefault).to.equal(implicitDefault);
+  });
+
+  it('同一平台切换多个命令超时不应导致缓存无界增长', () => {
+    AdapterFactory.create('darwin');
+    AdapterFactory.create('darwin', { timeout: 15000 });
+    AdapterFactory.create('darwin', { timeout: 20000 });
+    AdapterFactory.create('darwin', { timeout: 25000 });
+
+    expect(AdapterFactory.getCacheSize()).to.equal(1);
+  });
+
   it('不支持的平台会抛出 MonitorError', () => {
     expect(() => AdapterFactory.create('solaris')).to.throw(MonitorError)
       .and.have.property('code', ErrorCode.PLATFORM_NOT_SUPPORTED);

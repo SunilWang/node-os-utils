@@ -3,8 +3,7 @@ import { promises as fs } from 'fs';
 
 import { BasePlatformAdapter } from '../core/platform-adapter';
 import { BaseMonitor } from '../core/base-monitor';
-import { CommandExecutor } from '../utils/command-executor';
-import { CommandResult, SupportedFeatures } from '../types/platform';
+import { SupportedFeatures } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
 import { MonitorError, ErrorCode } from '../types/errors';
 import { isValidPositiveProcessId, sendProcessSignal } from '../utils/process-killer';
@@ -15,21 +14,17 @@ import { isValidPositiveProcessId, sendProcessSignal } from '../utils/process-ki
  * 实现 macOS 系统的监控功能，主要通过 sysctl、vm_stat、system_profiler 等命令
  */
 export class MacOSAdapter extends BasePlatformAdapter {
-  private executor: CommandExecutor;
   // comm 和 args 都可能含空格，分别放在各自输出的最后一列后再按 PID 合并。
   private readonly processSummaryCommand = 'ps -axww -o pid=,ppid=,%cpu=,%mem=,rss=,stat=,user=,comm=';
   private readonly processArgsCommand = 'ps -axww -o pid=,args=';
 
-  constructor() {
-    super('darwin');
-    this.executor = new CommandExecutor('darwin');
-  }
-
   /**
-   * 执行系统命令
+   * 创建 macOS 平台适配器。
+   *
+   * @param defaultExecuteOptions 底层系统命令的默认执行选项
    */
-  async executeCommand(command: string, options?: ExecuteOptions): Promise<CommandResult> {
-    return this.executor.execute(command, options);
+  constructor(defaultExecuteOptions: ExecuteOptions = {}) {
+    super('darwin', defaultExecuteOptions);
   }
 
   /**

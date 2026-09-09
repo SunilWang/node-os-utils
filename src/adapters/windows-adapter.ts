@@ -3,8 +3,7 @@ import { promises as fs } from 'fs';
 
 import { BasePlatformAdapter } from '../core/platform-adapter';
 import { BaseMonitor } from '../core/base-monitor';
-import { CommandExecutor } from '../utils/command-executor';
-import { CommandResult, SupportedFeatures } from '../types/platform';
+import { SupportedFeatures } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
 import { MonitorError, ErrorCode } from '../types/errors';
 import {
@@ -18,18 +17,13 @@ import {
  * 通过 PowerShell / WMI / Node.js 原生 API 获取系统信息
  */
 export class WindowsAdapter extends BasePlatformAdapter {
-  private executor: CommandExecutor;
-
-  constructor() {
-    super('win32');
-    this.executor = new CommandExecutor('win32');
-  }
-
   /**
-   * 执行系统命令
+   * 创建 Windows 平台适配器。
+   *
+   * @param defaultExecuteOptions 底层系统命令的默认执行选项
    */
-  async executeCommand(command: string, options?: ExecuteOptions): Promise<CommandResult> {
-    return this.executor.execute(command, options);
+  constructor(defaultExecuteOptions: ExecuteOptions = {}) {
+    super('win32', defaultExecuteOptions);
   }
 
   /**
@@ -751,8 +745,13 @@ export class WindowsAdapter extends BasePlatformAdapter {
         free: this.safeParseNumber(drive.Free),
         filesystem: 'NTFS'
       }));
-    } catch {
-      // 回退到 wmic
+    } catch (error) {
+      // 命令超时表示当前预算已经耗尽，不能再启动 CIM fallback 加剧资源争用。
+      if (error instanceof MonitorError && error.code === ErrorCode.TIMEOUT) {
+        throw error;
+      }
+
+      // 仅非超时错误才回退到 CIM/WMI 查询。
       try {
         const wmi = await this.executePowerShell(
           'Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,FileSystem,Size,FreeSpace | ConvertTo-Json'
@@ -771,8 +770,12 @@ export class WindowsAdapter extends BasePlatformAdapter {
             filesystem: disk.FileSystem
           };
         });
-      } catch (error) {
-        throw this.createCommandError('getFileSystemDrives', error);
+      } catch (fallbackError) {
+        if (fallbackError instanceof MonitorError && fallbackError.code === ErrorCode.TIMEOUT) {
+          throw fallbackError;
+        }
+
+        throw this.createCommandError('getFileSystemDrives', fallbackError);
       }
     }
   }

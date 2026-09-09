@@ -155,6 +155,42 @@ describe('OSUtils 入口类', () => {
     expect(memory).to.not.equal(cpu1);
   });
 
+  it('全局 timeout 应传递给适配器和所有监控器，且监控器配置优先', () => {
+    const adapter = createAdapterStub();
+    let adapterTimeout: number | undefined;
+    (AdapterFactory as any).create = (_platform: string, options?: { timeout?: number }) => {
+      adapterTimeout = options?.timeout;
+      return adapter;
+    };
+
+    const utils = new OSUtilsClass({
+      platform: 'test',
+      timeout: 15000,
+      disk: { timeout: 20000 }
+    });
+
+    expect(adapterTimeout).to.equal(15000);
+    expect(utils.cpu.getConfig().timeout).to.equal(15000);
+    expect(utils.memory.getConfig().timeout).to.equal(15000);
+    expect(utils.disk.getConfig().timeout).to.equal(20000);
+    expect(utils.network.getConfig().timeout).to.equal(15000);
+    expect(utils.process.getConfig().timeout).to.equal(15000);
+    expect(utils.system.getConfig().timeout).to.equal(15000);
+    utils.destroy();
+  });
+
+  it('未显式配置全局 timeout 时应保留各监控器原有默认值', () => {
+    const utils = new OSUtilsClass({ platform: 'test' });
+
+    expect(utils.cpu.getConfig().timeout).to.equal(10000);
+    expect(utils.memory.getConfig().timeout).to.equal(5000);
+    expect(utils.disk.getConfig().timeout).to.equal(10000);
+    expect(utils.network.getConfig().timeout).to.equal(10000);
+    expect(utils.process.getConfig().timeout).to.equal(15000);
+    expect(utils.system.getConfig().timeout).to.equal(15000);
+    utils.destroy();
+  });
+
   it('configureCache 会重建缓存并重置监控器实例', () => {
     const utils = new OSUtilsClass({ platform: 'test' });
     const firstCpu = utils.cpu;

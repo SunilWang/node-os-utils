@@ -3,8 +3,7 @@ import { promises as fs } from 'fs';
 import * as fsSync from 'fs';
 import { BasePlatformAdapter } from '../core/platform-adapter';
 import { BaseMonitor } from '../core/base-monitor';
-import { CommandExecutor } from '../utils/command-executor';
-import { CommandResult, SupportedFeatures } from '../types/platform';
+import { SupportedFeatures } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
 import { MonitorError, ErrorCode } from '../types/errors';
 import { isValidPositiveProcessId, sendProcessSignal } from '../utils/process-killer';
@@ -33,7 +32,6 @@ interface CpuStatSnapshot {
  * 实现 Linux 系统的监控功能，主要通过 /proc、/sys 文件系统和系统命令
  */
 export class LinuxAdapter extends BasePlatformAdapter {
-  private executor: CommandExecutor;
   private readonly containerMode: boolean;
   private readonly processListCommand = 'ps -eo pid=,ppid=,comm=,%cpu=,%mem=,rss=,stat=,user=,args=';
   private readonly cpuUsageSamplingInterval = 200;
@@ -53,18 +51,15 @@ export class LinuxAdapter extends BasePlatformAdapter {
     cpufreq: '/sys/devices/system/cpu'
   };
 
-  constructor() {
-    super('linux');
-    this.executor = new CommandExecutor('linux');
+  /**
+   * 创建 Linux 平台适配器。
+   *
+   * @param defaultExecuteOptions 底层系统命令的默认执行选项
+   */
+  constructor(defaultExecuteOptions: ExecuteOptions = {}) {
+    super('linux', defaultExecuteOptions);
     this.containerMode = this.detectContainerEnvironment();
     this.supportedFeatures.system.services = !this.containerMode && this.isSystemdServiceManagerAvailable();
-  }
-
-  /**
-   * 执行系统命令
-   */
-  async executeCommand(command: string, options?: ExecuteOptions): Promise<CommandResult> {
-    return this.executor.execute(command, options);
   }
 
   /**

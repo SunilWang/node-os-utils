@@ -17,6 +17,7 @@ import packageJson from '../package.json';
 
 import {
   GlobalConfig,
+  MonitorConfig,
   PlatformAdapter
 } from './types';
 
@@ -29,6 +30,8 @@ export class OSUtils {
   private adapter: PlatformAdapter;
   private cache: CacheManager;
   private config: GlobalConfig;
+  /** 用户显式配置的全局超时；未配置时保留各监控器原有默认值。 */
+  private readonly configuredTimeout?: number;
 
   // 监控器实例
   private _cpu?: CPUMonitor;
@@ -39,6 +42,8 @@ export class OSUtils {
   private _system?: SystemMonitor;
 
   constructor(config: Partial<GlobalConfig> = {}) {
+    this.configuredTimeout = config.timeout;
+
     // 合并默认配置
     this.config = {
       platform: undefined, // 自动检测
@@ -51,7 +56,9 @@ export class OSUtils {
     };
 
     // 创建平台适配器
-    this.adapter = AdapterFactory.create(this.config.platform);
+    this.adapter = AdapterFactory.create(this.config.platform, {
+      timeout: this.config.timeout
+    });
 
     // 创建缓存管理器
     this.cache = new CacheManager({
@@ -66,11 +73,30 @@ export class OSUtils {
   }
 
   /**
+   * 合并全局与监控器级超时配置。
+   *
+   * @param config 监控器专属配置
+   * @returns 合并后的配置；监控器级 timeout 优先于全局 timeout
+   */
+  private mergeMonitorConfig<C extends MonitorConfig>(config?: C): C {
+    const timeout = config?.timeout ?? this.configuredTimeout;
+
+    if (timeout === undefined) {
+      return { ...config } as C;
+    }
+
+    return {
+      ...config,
+      timeout
+    } as C;
+  }
+
+  /**
    * CPU 监控器
    */
   get cpu(): CPUMonitor {
     if (!this._cpu) {
-      this._cpu = new CPUMonitor(this.adapter, this.config.cpu, this.cache);
+      this._cpu = new CPUMonitor(this.adapter, this.mergeMonitorConfig(this.config.cpu), this.cache);
     }
     return this._cpu;
   }
@@ -80,7 +106,7 @@ export class OSUtils {
    */
   get memory(): MemoryMonitor {
     if (!this._memory) {
-      this._memory = new MemoryMonitor(this.adapter, this.config.memory, this.cache);
+      this._memory = new MemoryMonitor(this.adapter, this.mergeMonitorConfig(this.config.memory), this.cache);
     }
     return this._memory;
   }
@@ -90,7 +116,7 @@ export class OSUtils {
    */
   get disk(): DiskMonitor {
     if (!this._disk) {
-      this._disk = new DiskMonitor(this.adapter, this.config.disk, this.cache);
+      this._disk = new DiskMonitor(this.adapter, this.mergeMonitorConfig(this.config.disk), this.cache);
     }
     return this._disk;
   }
@@ -100,7 +126,7 @@ export class OSUtils {
    */
   get network(): NetworkMonitor {
     if (!this._network) {
-      this._network = new NetworkMonitor(this.adapter, this.config.network, this.cache);
+      this._network = new NetworkMonitor(this.adapter, this.mergeMonitorConfig(this.config.network), this.cache);
     }
     return this._network;
   }
@@ -110,7 +136,7 @@ export class OSUtils {
    */
   get process(): ProcessMonitor {
     if (!this._process) {
-      this._process = new ProcessMonitor(this.adapter, this.config.process, this.cache);
+      this._process = new ProcessMonitor(this.adapter, this.mergeMonitorConfig(this.config.process), this.cache);
     }
     return this._process;
   }
@@ -120,7 +146,7 @@ export class OSUtils {
    */
   get system(): SystemMonitor {
     if (!this._system) {
-      this._system = new SystemMonitor(this.adapter, this.config.system, this.cache, {
+      this._system = new SystemMonitor(this.adapter, this.mergeMonitorConfig(this.config.system), this.cache, {
         cpuUsage: () => this.cpu.usage(),
         memoryUsage: () => this.memory.usage(),
         diskUsage: () => this.disk.usage(),

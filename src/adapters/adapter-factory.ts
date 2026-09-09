@@ -1,11 +1,12 @@
 import { PlatformAdapter } from '../types/platform';
+import { ExecuteOptions } from '../types/config';
 import { LinuxAdapter } from './linux-adapter';
 import { MacOSAdapter } from './macos-adapter';
 import { WindowsAdapter } from './windows-adapter';
 import { MonitorError, ErrorCode } from '../types/errors';
 
 /**
- * 平台适配器工厂，负责实例化并缓存各操作系统的具体适配器
+ * 平台适配器工厂，负责实例化具体适配器，并缓存各操作系统的默认超时实例
  */
 export class AdapterFactory {
   private static adapters: Map<string, PlatformAdapter> = new Map();
@@ -14,13 +15,21 @@ export class AdapterFactory {
    * 创建平台适配器
    *
    * @param platform 目标平台，如果不指定则自动检测
+   * @param defaultExecuteOptions 底层系统命令的默认执行选项
    * @returns 平台适配器实例
    */
-  static create(platform?: string): PlatformAdapter {
+  static create(platform?: string, defaultExecuteOptions: ExecuteOptions = {}): PlatformAdapter {
     const targetPlatform = this.normalizePlatform(platform || this.detectPlatform());
+    const effectiveExecuteOptions: ExecuteOptions = {
+      ...defaultExecuteOptions,
+      timeout: defaultExecuteOptions.timeout ?? 10000
+    };
+    const optionKeys = Object.keys(defaultExecuteOptions);
+    const usesDefaultOptions = effectiveExecuteOptions.timeout === 10000 &&
+      optionKeys.every(key => key === 'timeout');
 
-    // 检查是否已有缓存的适配器实例
-    if (this.adapters.has(targetPlatform)) {
+    // 保持原有默认实例单例语义；自定义执行选项不缓存，避免配置串扰和缓存无界增长。
+    if (usesDefaultOptions && this.adapters.has(targetPlatform)) {
       return this.adapters.get(targetPlatform)!;
     }
 
@@ -28,13 +37,13 @@ export class AdapterFactory {
 
     switch (targetPlatform) {
       case 'linux':
-        adapter = new LinuxAdapter();
+        adapter = new LinuxAdapter(effectiveExecuteOptions);
         break;
       case 'darwin':
-        adapter = new MacOSAdapter();
+        adapter = new MacOSAdapter(effectiveExecuteOptions);
         break;
       case 'win32':
-        adapter = new WindowsAdapter();
+        adapter = new WindowsAdapter(effectiveExecuteOptions);
         break;
       default:
         throw new MonitorError(
@@ -45,7 +54,9 @@ export class AdapterFactory {
     }
 
     // 缓存适配器实例
-    this.adapters.set(targetPlatform, adapter);
+    if (usesDefaultOptions) {
+      this.adapters.set(targetPlatform, adapter);
+    }
     return adapter;
   }
 

@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import os from 'os';
 
 import { WindowsAdapter } from '../../../src/adapters/windows-adapter';
+import { DiskMonitor } from '../../../src/monitors/disk-monitor';
 import { MonitorError, ErrorCode } from '../../../src/types/errors';
 
 describe('WindowsAdapter 内部行为', () => {
@@ -105,6 +106,80 @@ describe('WindowsAdapter 内部行为', () => {
     expect(disks[0].used).to.equal(0);
     expect(disks[0].available).to.equal(1024);
     expect(disks[0].usagePercentage).to.equal(0);
+  });
+
+  it('Get-PSDrive 超时后不应继续启动 CIM fallback', async () => {
+    const adapter = new WindowsAdapter();
+    const internal = adapter as any;
+    let callCount = 0;
+
+    internal.executePowerShell = async () => {
+      callCount += 1;
+      throw new MonitorError('PowerShell timeout', ErrorCode.TIMEOUT, 'win32');
+    };
+
+    try {
+      await adapter.getDiskInfo();
+      expect.fail('超时后应直接失败');
+    } catch (error: any) {
+      expect(error).to.be.instanceOf(MonitorError);
+      expect(error.code).to.equal(ErrorCode.TIMEOUT);
+    }
+    expect(callCount).to.equal(1);
+  });
+
+  it('监控层先超时后，迟到的 Get-PSDrive 超时仍不应启动 CIM fallback', async () => {
+    const adapter = new WindowsAdapter();
+    const internal = adapter as any;
+    let rejectCommand: ((reason: MonitorError) => void) | undefined;
+    let callCount = 0;
+
+    internal.executePowerShell = () => {
+      callCount += 1;
+      return new Promise((_, reject) => {
+        rejectCommand = reject;
+      });
+    };
+
+    const monitor = new DiskMonitor(adapter, {
+      cacheEnabled: false,
+      timeout: 1
+    });
+    const result = await monitor.info();
+
+    expect(result.success).to.equal(false);
+    if (!result.success) {
+      expect(result.error.code).to.equal(ErrorCode.TIMEOUT);
+    }
+
+    rejectCommand?.(new MonitorError('PowerShell timeout', ErrorCode.TIMEOUT, 'win32'));
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    expect(callCount).to.equal(1);
+    monitor.destroy();
+  });
+
+  it('CIM fallback 超时应保留 TIMEOUT 错误类型', async () => {
+    const adapter = new WindowsAdapter();
+    const internal = adapter as any;
+    let callCount = 0;
+
+    internal.executePowerShell = async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new MonitorError('Get-PSDrive failed', ErrorCode.COMMAND_FAILED, 'win32');
+      }
+      throw new MonitorError('CIM timeout', ErrorCode.TIMEOUT, 'win32');
+    };
+
+    try {
+      await adapter.getDiskInfo();
+      expect.fail('CIM 超时后应直接失败');
+    } catch (error: any) {
+      expect(error).to.be.instanceOf(MonitorError);
+      expect(error.code).to.equal(ErrorCode.TIMEOUT);
+    }
+    expect(callCount).to.equal(2);
   });
 
   it('在网络统计命令失败时应抛出 MonitorError', async () => {
