@@ -22,8 +22,10 @@ export class RealCommandTestBase {
   /**
    * 验证当前真实测试依赖的最小命令能力。
    *
-   * @param context Mocha 测试上下文
-   * @returns 命令可执行时正常返回；明确的环境限制时跳过当前套件
+   * @param {Mocha.Context} context Mocha 测试上下文
+   * @param {Partial<Record<NodeJS.Platform, string>>} [commandByPlatform] 各平台覆盖使用的探测命令
+   * @returns {Promise<void>} 命令可执行时正常返回；明确的环境限制时跳过当前套件
+   * @throws {MonitorError} 命令超时或其他非环境限制错误
    */
   static async requireRuntimeBaseline(context: Mocha.Context, commandByPlatform?: Partial<Record<NodeJS.Platform, string>>): Promise<void> {
     const defaultCommands: Record<string, string> = {
@@ -38,11 +40,22 @@ export class RealCommandTestBase {
       return
     }
 
+    // 基线负责初始化系统命令能力，Windows CI 上已出现超过 15 秒的启动耗时。
+    // 使用独立的初始化预算，真实监控调用仍由各测试的 15 秒配置约束。
+    const timeout = platform === 'win32' ? 60000 : 5000
+    if (platform === 'win32') {
+      const hookTimeout = context.timeout()
+      // 外层需比命令超时多留 5 秒用于进程退出和错误上报；保留更长或无限的既有预算。
+      if (hookTimeout > 0 && hookTimeout < timeout + 5000) context.timeout(timeout + 5000)
+    }
+
     try {
-      // Windows Runner 上 PowerShell/CIM 冷启动存在抖动，需与真实监控测试的 15 秒预算保持一致。
-      const timeout = platform === 'win32' ? 15000 : 5000
       await new CommandExecutor(platform).execute(command, { timeout })
     } catch (error) {
+      if (!this.isEnvironmentalError(error)) {
+        const executionTime = error instanceof MonitorError ? error.details?.executionTime : undefined
+        console.error(`[real-command][baseline] platform=${platform} command=${command} timeout=${timeout}ms executionTime=${executionTime ?? 'unknown'}ms`)
+      }
       this.skipForEnvironmentalError(context, error)
     }
   }
