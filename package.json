@@ -91,7 +91,7 @@
     "@typescript-eslint/parser": "^7.18.0",
     "chai": "~4.3.0",
     "eslint": "^8.57.1",
-    "mocha": "~10.0.0",
+    "mocha": "~10.8.2",
     "nyc": "~15.1.0",
     "typedoc": "~0.25.0",
     "typescript": "~5.4.0"
