@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import { OSUtils } from '../../../src'
+import { ErrorCode } from '../../../src/types/errors'
 import { RealCommandTestBase as Base } from '../real-command-base'
 
 describe('Process Monitor 真实运行时契约', function () {
@@ -49,7 +50,7 @@ describe('Process Monitor 真实运行时契约', function () {
   it('children、tree 和 kill 非法 PID 应返回安全结果', async function () {
     expect(Base.unwrap<any[]>(await utils.process.children(process.pid), 'process.children')).to.be.an('array')
     const tree = await utils.process.tree(process.pid)
-    expect(tree.success || (!tree.success && tree.error.code === 'PLATFORM_NOT_SUPPORTED')).to.equal(true)
+    expect(tree.success || (!tree.success && tree.error.code === ErrorCode.PLATFORM_NOT_SUPPORTED)).to.equal(true)
     const result = Base.unwrap<boolean>(await utils.process.kill(-1), 'process.kill')
     expect(result).to.equal(false)
   })

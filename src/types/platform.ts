@@ -60,7 +60,9 @@ export interface PlatformAdapter {
   readFile(path: string): Promise<string>;
 
   /**
-   * 检查文件是否存在
+   * 检查路径是否存在。
+   *
+   * 文件和目录均属于有效路径。
    */
   fileExists(path: string): Promise<boolean>;
 

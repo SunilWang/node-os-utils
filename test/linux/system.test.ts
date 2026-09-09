@@ -12,6 +12,7 @@ import {
 } from '../shared/utils/test-base'
 import { LinuxTestUtils } from '../shared/utils/platform-specific'
 import { OSUtils } from '../../src'
+import { ErrorCode } from '../../src/types/errors'
 
 // 只在Linux系统上运行这些测试
 describe('Linux System Tests', function() {
@@ -349,7 +350,7 @@ describe('Linux System Tests', function() {
 
       if (!result.success) {
         expect(result.error).to.exist
-        expect(result.error!.code).to.be.oneOf(['PERMISSION_DENIED', 'NOT_SUPPORTED'])
+        expect(result.error!.code).to.be.oneOf([ErrorCode.PERMISSION_DENIED, 'NOT_SUPPORTED'])
       }
     }))
 

@@ -4,7 +4,8 @@ import {
   ProcessConfig,
   ProcessInfo,
   ProcessId,
-  DataSize
+  DataSize,
+  ErrorCode
 } from '../types';
 import { PlatformAdapter } from '../types/platform';
 import { CacheManager } from '../core/cache-manager';
@@ -44,7 +45,9 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
     // 过滤条件属于查询语义的一部分，必须纳入缓存键，避免不同配置复用同一份列表。
     const limitKey = options.skipLimit ? 'all' : (this.processConfig.maxResults ?? 'all');
     const pidKey = this.processConfig.pids?.slice().sort((a, b) => a - b).join(',') || 'all';
-    const filterKey = encodeURIComponent(this.processConfig.nameFilter || 'all');
+    const filterKey = this.processConfig.nameFilter === undefined
+      ? 'unset'
+      : `value:${encodeURIComponent(this.processConfig.nameFilter)}`;
     const cacheKey = `process-list-${limitKey}-${pidKey}-${filterKey}`;
 
     return this.executeWithCache(
@@ -273,7 +276,7 @@ export class ProcessMonitor extends BaseMonitor<ProcessInfo[]> {
   async exists(pid: ProcessId): Promise<MonitorResult<boolean>> {
     const processResult = await this.byPid(pid);
     if (!processResult.success) {
-      if (processResult.error.code === 'NOT_AVAILABLE') {
+      if (processResult.error.code === ErrorCode.NOT_AVAILABLE) {
         return this.createSuccessResult(false);
       }
       return this.createErrorResult(processResult.error);

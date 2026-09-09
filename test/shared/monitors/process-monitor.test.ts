@@ -197,6 +197,27 @@ describe('ProcessMonitor', function() {
     expect(adapter.processListCalls).to.equal(1)
   })
 
+  it('名称过滤器 all 不应与未过滤查询共用缓存', async function() {
+    const adapter = new ProcessAdapterStub({
+      processes: [
+        { pid: 1, ppid: 0, name: 'all-worker', command: 'all-worker' },
+        { pid: 2, ppid: 0, name: 'other-worker', command: 'other-worker' }
+      ]
+    })
+    const monitor = new ProcessMonitor(adapter)
+
+    const unfiltered = await monitor.list()
+    monitor.withNameFilter('all')
+    const filtered = await monitor.list()
+
+    expect(unfiltered.success && unfiltered.data).to.have.lengthOf(2)
+    expect(filtered.success && filtered.data).to.have.lengthOf(1)
+    if (filtered.success) {
+      expect(filtered.data[0].name).to.equal('all-worker')
+    }
+    expect(adapter.processListCalls).to.equal(2)
+  })
+
   it('kill 应将合法参数传递给平台适配器', async function() {
     const adapter = new ProcessAdapterStub()
     const monitor = new ProcessMonitor(adapter)

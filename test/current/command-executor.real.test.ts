@@ -110,9 +110,12 @@ describe('CommandExecutor 真实命令执行', function () {
     }
   })
 
-  it('shell 为 false 时应将真实命令拆分为可执行参数', async function () {
+  it('shell 为 false 时应原样传递结构化可执行参数', async function () {
     const result = await executor.executeStream(
-      `${JSON.stringify(process.execPath)} -e ${JSON.stringify('process.stdout.write("no-shell")')}`,
+      {
+        executable: process.execPath,
+        args: ['-e', 'process.stdout.write("no-shell")']
+      },
       () => undefined,
       { shell: false }
     )

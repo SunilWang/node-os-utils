@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import { OSUtils } from '../../../src'
+import { ErrorCode } from '../../../src/types/errors'
 import { RealCommandTestBase as Base } from '../real-command-base'
 
 describe('Disk Monitor 真实运行时契约', function () {
@@ -41,7 +42,7 @@ describe('Disk Monitor 真实运行时契约', function () {
     expect(Base.unwrap<any[]>(await utils.disk.mounts(), 'disk.mounts')).to.be.an('array').with.length.greaterThan(0)
     if (Base.platform() === 'darwin') await Base.requireRuntimeBaseline(this, { darwin: 'iostat -d' })
     const stats = await utils.disk.stats()
-    expect(stats.success || (!stats.success && stats.error.code === 'PLATFORM_NOT_SUPPORTED')).to.equal(true)
+    expect(stats.success || (!stats.success && stats.error.code === ErrorCode.PLATFORM_NOT_SUPPORTED)).to.equal(true)
     const health = Base.unwrap<any>(await utils.disk.healthCheck(), 'disk.healthCheck')
     expect(health.status).to.be.oneOf(['healthy', 'warning', 'critical'])
     expect(health.issues).to.be.an('array')

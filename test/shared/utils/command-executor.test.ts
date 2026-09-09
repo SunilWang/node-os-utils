@@ -4,8 +4,12 @@
  */
 
 import { expect } from 'chai'
+import { EventEmitter } from 'events'
 import { CommandExecutor } from '../../../src/utils/command-executor'
 import { MonitorError, ErrorCode } from '../../../src/types/errors'
+
+const childProcess = require('child_process') as typeof import('child_process')
+const mutableChildProcess = childProcess as any
 
 describe('CommandExecutor Unit Tests', function() {
   let executor: CommandExecutor
@@ -40,7 +44,7 @@ describe('CommandExecutor Unit Tests', function() {
         expect(error).to.be.an('error')
         // 检查是否是MonitorError
         if (error.code) {
-          expect(error.code).to.be.oneOf(['COMMAND_FAILED', 'FILE_NOT_FOUND'])
+          expect(error.code).to.be.oneOf([ErrorCode.COMMAND_FAILED, ErrorCode.FILE_NOT_FOUND])
         }
       }
     })
@@ -75,7 +79,7 @@ describe('CommandExecutor Unit Tests', function() {
       } catch (error: any) {
         expect(error).to.be.an('error')
         if (error.code) {
-          expect(error.code).to.equal('TIMEOUT')
+          expect(error.code).to.equal(ErrorCode.TIMEOUT)
         }
       }
     })
@@ -179,15 +183,89 @@ describe('CommandExecutor Unit Tests', function() {
   describe('流式执行', function() {
     it('应该在禁用 shell 时正确处理包含空格的命令', async function() {
       const script = 'console.log("stream output")'
-      const command = executor.buildCommand(process.execPath, ['-e', script])
 
       const chunks: string[] = []
-      const result = await executor.executeStream(command, (data) => {
+      const result = await executor.executeStream({
+        executable: process.execPath,
+        args: ['-e', script]
+      }, (data) => {
         chunks.push(data)
       }, { shell: false })
 
       expect(result.exitCode).to.equal(0)
       expect(chunks.join('')).to.contain('stream output')
+    })
+
+    it('禁用 shell 时应原样保留空参数和尾反斜杠', async function() {
+      const expected = ['', 'C:\\temp\\']
+      const script = 'process.stdout.write(JSON.stringify(process.argv.slice(1)))'
+
+      const result = await executor.executeStream({
+        executable: process.execPath,
+        args: ['-e', script, ...expected]
+      }, () => undefined, { shell: false })
+
+      expect(JSON.parse(result.stdout)).to.deep.equal(expected)
+    })
+
+    it('流式执行不应向 spawn 传递内置 timeout', async function() {
+      const originalSpawn = childProcess.spawn
+      const child = new EventEmitter() as any
+      let capturedOptions: Record<string, unknown> | undefined
+
+      child.pid = 12345
+      child.stdout = new EventEmitter()
+      child.stderr = new EventEmitter()
+
+      mutableChildProcess.spawn = (...args: any[]) => {
+        capturedOptions = args[1]
+        return child
+      }
+
+      try {
+        const pending = executor.executeStream('ignored-command', () => undefined, { timeout: 5000 })
+        child.emit('close', 0)
+        await pending
+
+        expect(capturedOptions).to.not.have.property('timeout')
+      } finally {
+        mutableChildProcess.spawn = originalSpawn
+      }
+    })
+
+    it('Windows taskkill 启动失败的 error 事件应被消费', function() {
+      const originalSpawn = childProcess.spawn
+      const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+      const taskkill = new EventEmitter() as any
+      let listenerCountAtUnref = 0
+      let capturedArgs: any[] = []
+
+      taskkill.unref = () => {
+        listenerCountAtUnref = taskkill.listenerCount('error')
+        return taskkill
+      }
+      mutableChildProcess.spawn = (...args: any[]) => {
+        capturedArgs = args
+        return taskkill
+      }
+
+      try {
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+        ;(executor as any).terminateProcessTree({ pid: 43210 })
+
+        expect(capturedArgs).to.deep.equal([
+          'taskkill',
+          ['/pid', '43210', '/T', '/F'],
+          { stdio: 'ignore' }
+        ])
+        expect(listenerCountAtUnref).to.equal(1)
+        expect(() => taskkill.emit('error', new Error('taskkill unavailable'))).not.to.throw()
+      } finally {
+        mutableChildProcess.spawn = originalSpawn
+        if (platformDescriptor) {
+          Object.defineProperty(process, 'platform', platformDescriptor)
+        }
+      }
     })
 
     it('超时后应终止进程并抛出 TIMEOUT 错误', async function() {

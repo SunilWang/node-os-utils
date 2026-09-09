@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import * as os from 'os'
 import { OSUtils } from '../../../src'
+import { ErrorCode } from '../../../src/types/errors'
 import { RealCommandTestBase as Base } from '../real-command-base'
 
 describe('System Monitor 真实运行时契约', function () {
@@ -34,7 +35,7 @@ describe('System Monitor 真实运行时契约', function () {
 
   it('services 应返回数组或明确能力错误', async function () {
     const services = await utils.system.services()
-    expect(services.success || (!services.success && services.error.code === 'PLATFORM_NOT_SUPPORTED')).to.equal(true)
+    expect(services.success || (!services.success && services.error.code === ErrorCode.PLATFORM_NOT_SUPPORTED)).to.equal(true)
     if (services.success) expect(services.data).to.be.an('array')
   })
 

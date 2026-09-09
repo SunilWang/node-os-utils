@@ -22,6 +22,24 @@ describe('NetworkMonitor 网关与接口转换', () => {
 
     expect(result).to.deep.equal({ gateway: '192.168.0.1', interface: 'eth0' });
   });
+
+  it('数组结构应优先保留接口顶层的 MAC 地址', () => {
+    const result = (monitor as any).transformNetworkInterfaces([{
+      name: 'Ethernet',
+      mac: 'aa:bb:cc:dd:ee:ff',
+      state: 'up',
+      internal: false,
+      addresses: [{
+        address: '192.168.1.10',
+        netmask: '255.255.255.0',
+        family: 'IPv4',
+        internal: false
+      }]
+    }]);
+
+    expect(result).to.have.lengthOf(1);
+    expect(result[0].mac).to.equal('aa:bb:cc:dd:ee:ff');
+  });
 });
 
 describe('NetworkMonitor bandwidth() MonitorResult 契约', () => {

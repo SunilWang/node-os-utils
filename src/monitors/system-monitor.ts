@@ -1,6 +1,8 @@
 import { BaseMonitor } from '../core/base-monitor';
 import {
+  DiskUsage,
   MonitorResult,
+  NetworkStats,
   SystemConfig,
   SystemInfo,
   LoadAverage
@@ -18,17 +20,37 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
   /** 上一次概览采样的网络累计字节数，用于判断两次采样之间是否发生流量。 */
   private previousNetworkCounters = new Map<string, { rxBytes: number; txBytes: number }>();
 
+  /**
+   * 创建系统监控器。
+   *
+   * @param adapter 平台适配器
+   * @param config 系统监控配置
+   * @param cache 共享缓存管理器
+   * @param resourceProvider OSUtils 内部注入的统一资源数据源；省略时直接读取适配器
+   */
   constructor(
     adapter: PlatformAdapter,
     config: SystemConfig = {},
-    cache?: CacheManager
+    cache?: CacheManager,
+    private readonly resourceProvider?: {
+      /** @returns CPU 使用率监控结果 */
+      cpuUsage(): Promise<MonitorResult<number>>;
+      /** @returns 内存使用率监控结果 */
+      memoryUsage(): Promise<MonitorResult<number>>;
+      /** @returns 已按磁盘监控器配置过滤的磁盘列表 */
+      diskUsage(): Promise<MonitorResult<DiskUsage[]>>;
+      /** @returns 已按网络监控器配置转换的接口统计 */
+      networkStats(): Promise<MonitorResult<NetworkStats[]>>;
+    }
   ) {
     super(adapter, config, cache);
     this.systemConfig = { ...this.getDefaultConfig(), ...config } as SystemConfig;
   }
 
   /**
-   * 获取系统基本信息
+   * 获取系统基本信息。
+   *
+   * includeSystemInfo 为 false 时返回平台不支持错误结果，不调用适配器。
    */
   async info(): Promise<MonitorResult<SystemInfo>> {
     if (!this.systemConfig.includeSystemInfo) {
@@ -235,7 +257,14 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
       issues: string[];
     };
   }>> {
-    const cacheKey = 'system-overview';
+    // 运行时开关属于概览查询语义，必须进入缓存键，避免 setter 修改后复用旧概览。
+    const cacheKey = [
+      'system-overview',
+      `info:${Boolean(this.systemConfig.includeSystemInfo)}`,
+      `uptime:${Boolean(this.systemConfig.includeUptime)}`,
+      `load:${Boolean(this.systemConfig.includeLoad)}`,
+      `users:${Boolean(this.systemConfig.includeUsers)}`
+    ].join('-');
 
     return this.executeWithCache(
       cacheKey,
@@ -255,10 +284,10 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
           this.uptime().catch(() => ({ success: false, data: null })),
           this.load().catch(() => ({ success: false, data: null })),
           this.users().catch(() => ({ success: false, data: [] })),
-          Promise.resolve().then(() => this.adapter.getCPUUsage()),
-          Promise.resolve().then(() => this.adapter.getMemoryInfo()),
-          Promise.resolve().then(() => this.adapter.getDiskUsage()),
-          Promise.resolve().then(() => this.adapter.getNetworkStats())
+          this.getOverviewCPUUsage(),
+          this.getOverviewMemoryUsage(),
+          this.getOverviewDiskUsage(),
+          this.getOverviewNetworkStats()
         ]);
 
         const system = {
@@ -272,23 +301,14 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
             loadInfo.value.data!.status : 'unknown'
         };
 
-        const cpuRaw = cpuUsageInfo.status === 'fulfilled' ? cpuUsageInfo.value : {};
-        const memoryRaw = memoryInfo.status === 'fulfilled' ? memoryInfo.value : {};
-        const disksRaw = diskUsageInfo.status === 'fulfilled' && Array.isArray(diskUsageInfo.value)
-          ? diskUsageInfo.value : [];
         const networkRaw = networkStatsInfo.status === 'fulfilled' && Array.isArray(networkStatsInfo.value)
           ? networkStatsInfo.value : [];
-        const totalMemory = this.safeParseNumber(memoryRaw.total);
-        const usedMemory = this.safeParseNumber(memoryRaw.used);
-        const diskPercentages = disksRaw
-          .map((disk: any) => this.safeParseNumber(disk.usagePercentage ?? disk.usePercent))
-          .filter((value: number) => value >= 0);
 
         const networkActivity = this.detectNetworkActivity(networkRaw);
         const resources = {
-          cpuUsage: this.safeParseNumber(cpuRaw.overall ?? cpuRaw.usage),
-          memoryUsage: totalMemory > 0 ? (usedMemory / totalMemory) * 100 : 0,
-          diskUsage: diskPercentages.length > 0 ? Math.max(...diskPercentages) : 0,
+          cpuUsage: cpuUsageInfo.status === 'fulfilled' ? cpuUsageInfo.value : 0,
+          memoryUsage: memoryInfo.status === 'fulfilled' ? memoryInfo.value : 0,
+          diskUsage: diskUsageInfo.status === 'fulfilled' ? diskUsageInfo.value : 0,
           networkActivity
         };
 
@@ -383,7 +403,15 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
     issues: string[];
     score: number; // 0-100
   }>> {
-    const cacheKey = 'system-health';
+    // 健康检查结果受运行时开关影响，开关变化后不能复用旧评分。
+    const cacheKey = [
+      'system-health',
+      `info:${Boolean(this.systemConfig.includeSystemInfo)}`,
+      `uptime:${Boolean(this.systemConfig.includeUptime)}`,
+      `load:${Boolean(this.systemConfig.includeLoad)}`,
+      `users:${Boolean(this.systemConfig.includeUsers)}`,
+      `services:${Boolean(this.systemConfig.includeServices)}`
+    ].join('-');
 
     return this.executeWithCache(
       cacheKey,
@@ -398,48 +426,52 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
 
         let totalScore = 100;
 
-        // 检查系统负载
-        try {
-          const loadResult = await this.load();
-          if (loadResult.success && loadResult.data) {
-            if (loadResult.data.status === 'critical') {
-              issues.push(`Critical system load: ${loadResult.data.load1.toFixed(2)}`);
+        // 只检查已启用的系统负载，显式关闭不等于采集失败
+        if (this.systemConfig.includeLoad) {
+          try {
+            const loadResult = await this.load();
+            if (loadResult.success && loadResult.data) {
+              if (loadResult.data.status === 'critical') {
+                issues.push(`Critical system load: ${loadResult.data.load1.toFixed(2)}`);
+                checks.load = false;
+                totalScore -= 30;
+              } else if (loadResult.data.status === 'high') {
+                issues.push(`High system load: ${loadResult.data.load1.toFixed(2)}`);
+                checks.load = false;
+                totalScore -= 15;
+              }
+            } else if (!loadResult.success) {
+              issues.push(`Failed to check system load: ${loadResult.error.message}`);
               checks.load = false;
-              totalScore -= 30;
-            } else if (loadResult.data.status === 'high') {
-              issues.push(`High system load: ${loadResult.data.load1.toFixed(2)}`);
-              checks.load = false;
-              totalScore -= 15;
+              totalScore -= 20;
             }
-          } else if (!loadResult.success) {
-            issues.push(`Failed to check system load: ${loadResult.error.message}`);
+          } catch (error) {
+            issues.push('Failed to check system load');
             checks.load = false;
             totalScore -= 20;
           }
-        } catch (error) {
-          issues.push('Failed to check system load');
-          checks.load = false;
-          totalScore -= 20;
         }
 
-        // 检查系统运行时间
-        try {
-          const uptimeResult = await this.uptime();
-          if (uptimeResult.success && uptimeResult.data) {
-            const uptimeHours = uptimeResult.data.uptime / (1000 * 60 * 60);
-            if (uptimeHours < 1) {
-              issues.push('System recently restarted');
+        // 只检查已启用的运行时间，显式关闭时保持中性
+        if (this.systemConfig.includeUptime) {
+          try {
+            const uptimeResult = await this.uptime();
+            if (uptimeResult.success && uptimeResult.data) {
+              const uptimeHours = uptimeResult.data.uptime / (1000 * 60 * 60);
+              if (uptimeHours < 1) {
+                issues.push('System recently restarted');
+                totalScore -= 10;
+              }
+            } else if (!uptimeResult.success) {
+              issues.push(`Failed to check system uptime: ${uptimeResult.error.message}`);
+              checks.uptime = false;
               totalScore -= 10;
             }
-          } else if (!uptimeResult.success) {
-            issues.push(`Failed to check system uptime: ${uptimeResult.error.message}`);
+          } catch (error) {
+            issues.push('Failed to check system uptime');
             checks.uptime = false;
             totalScore -= 10;
           }
-        } catch (error) {
-          issues.push('Failed to check system uptime');
-          checks.uptime = false;
-          totalScore -= 10;
         }
 
         // 检查关键服务（如果启用）
@@ -536,7 +568,11 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
   }
 
   /**
-   * 配置是否包含系统信息
+   * 配置是否启用系统基本信息采集。
+   *
+   * 禁用后 info() 返回失败结果，overview() 中的 hostname 和 platform 降级为 unknown。
+   * @param include 是否启用系统基本信息采集
+   * @returns 当前监控器实例
    */
   withSystemInfo(include: boolean): this {
     this.systemConfig.includeSystemInfo = include;
@@ -576,6 +612,95 @@ export class SystemMonitor extends BaseMonitor<SystemInfo> {
       includeUsers: false, // 用户信息可能涉及隐私，默认不包含
       includeServices: false // 服务检查可能需要特殊权限，默认不包含
     };
+  }
+
+  /**
+   * 获取系统概览使用的 CPU 口径。
+   *
+   * @returns 经过 CPU Monitor 配置归一化的使用率；独立构造时回退到适配器数据
+   * @throws 注入的 CPU Monitor 返回失败结果时抛出对应错误
+   */
+  private async getOverviewCPUUsage(): Promise<number> {
+    if (this.resourceProvider) {
+      const result = await this.resourceProvider.cpuUsage();
+      if (!result.success) {
+        throw result.error;
+      }
+      return this.safeParseNumber(result.data);
+    }
+
+    const rawData = await this.adapter.getCPUUsage();
+    return this.safeParseNumber(rawData?.overall ?? rawData?.usage);
+  }
+
+  /**
+   * 获取系统概览使用的内存口径。
+   *
+   * @returns 内存使用率；独立构造时根据适配器的总量与已用量计算
+   * @throws 注入的 Memory Monitor 返回失败结果时抛出对应错误
+   */
+  private async getOverviewMemoryUsage(): Promise<number> {
+    if (this.resourceProvider) {
+      const result = await this.resourceProvider.memoryUsage();
+      if (!result.success) {
+        throw result.error;
+      }
+      return this.safeParseNumber(result.data);
+    }
+
+    const rawData = await this.adapter.getMemoryInfo();
+    const total = this.safeParseNumber(rawData?.total);
+    const used = this.safeParseNumber(rawData?.used);
+    return total > 0 ? (used / total) * 100 : 0;
+  }
+
+  /**
+   * 获取系统概览使用的最差磁盘分区占用率。
+   *
+   * @returns 已应用 Disk Monitor 过滤配置后的最大占用率
+   * @throws 注入的 Disk Monitor 返回失败结果时抛出对应错误
+   */
+  private async getOverviewDiskUsage(): Promise<number> {
+    let disks: Array<{ usagePercentage?: number; usePercent?: number }>;
+
+    if (this.resourceProvider) {
+      const result = await this.resourceProvider.diskUsage();
+      if (!result.success) {
+        throw result.error;
+      }
+      disks = result.data;
+    } else {
+      const rawData = await this.adapter.getDiskUsage();
+      disks = Array.isArray(rawData) ? rawData : [];
+    }
+
+    const percentages = disks
+      .map(disk => this.safeParseNumber(disk.usagePercentage ?? disk.usePercent))
+      .filter(value => value >= 0);
+    return percentages.length > 0 ? Math.max(...percentages) : 0;
+  }
+
+  /**
+   * 获取系统概览使用的逐接口网络累计计数。
+   *
+   * @returns 统一为数字字节数的网络统计；独立构造时回退到适配器数据
+   * @throws 注入的 Network Monitor 返回失败结果时抛出对应错误
+   */
+  private async getOverviewNetworkStats(): Promise<any[]> {
+    if (this.resourceProvider) {
+      const result = await this.resourceProvider.networkStats();
+      if (!result.success) {
+        throw result.error;
+      }
+      return result.data.map(stats => ({
+        interface: stats.interface,
+        rxBytes: stats.rxBytes.toBytes(),
+        txBytes: stats.txBytes.toBytes()
+      }));
+    }
+
+    const rawData = await this.adapter.getNetworkStats();
+    return Array.isArray(rawData) ? rawData : [];
   }
 
   // 私有转换方法

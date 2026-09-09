@@ -57,9 +57,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
     super('linux');
     this.executor = new CommandExecutor('linux');
     this.containerMode = this.detectContainerEnvironment();
-    if (this.containerMode) {
-      this.supportedFeatures.system.services = false;
-    }
+    this.supportedFeatures.system.services = !this.containerMode && this.isSystemdServiceManagerAvailable();
   }
 
   /**
@@ -102,7 +100,7 @@ export class LinuxAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 检查文件是否存在
+   * 检查路径是否存在；文件和目录均视为存在
    */
   async fileExists(path: string): Promise<boolean> {
     try {
@@ -461,7 +459,8 @@ export class LinuxAdapter extends BasePlatformAdapter {
         load: true,
         uptime: true,
         users: true,
-        services: true // getSystemServices 已实现；容器环境中构造函数会将其改回 false
+        // systemctl 并非所有 Linux 环境都可用，构造函数会根据实际运行环境开启。
+        services: false
       }
     };
   }
@@ -1182,8 +1181,9 @@ export class LinuxAdapter extends BasePlatformAdapter {
    * 获取系统服务
    */
   async getSystemServices(): Promise<any> {
-    if (this.containerMode) {
-      throw this.createUnsupportedError('system.services (container)');
+    // 调用时重新检查，避免构造后 systemd 状态或 PATH 发生变化。
+    if (this.containerMode || !this.isSystemdServiceManagerAvailable()) {
+      throw this.createUnsupportedError('system.services (systemd unavailable)');
     }
     try {
       const result = await this.executeCommand('systemctl list-units --type=service --no-pager');
@@ -1587,5 +1587,32 @@ export class LinuxAdapter extends BasePlatformAdapter {
     }
 
     return false;
+  }
+
+  /**
+   * 检查 systemd 是否正在管理当前系统，且 systemctl 是否可执行。
+   *
+   * 仅检查文件系统状态，不启动子进程，避免能力探测阻塞构造流程。
+   *
+   * @returns systemd 运行且 PATH 中可找到可执行 systemctl 时返回 true
+   */
+  private isSystemdServiceManagerAvailable(): boolean {
+    try {
+      if (!fsSync.statSync('/run/systemd/system').isDirectory()) {
+        return false;
+      }
+
+      const pathEntries = (process.env.PATH || '').split(':').filter(Boolean);
+      return pathEntries.some(directory => {
+        try {
+          fsSync.accessSync(`${directory.replace(/\/$/, '')}/systemctl`, fsSync.constants.X_OK);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    } catch {
+      return false;
+    }
   }
 }

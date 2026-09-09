@@ -67,7 +67,7 @@ export class WindowsAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 检查文件是否存在
+   * 检查路径是否存在；文件和目录均视为存在
    */
   async fileExists(path: string): Promise<boolean> {
     try {

@@ -38,6 +38,8 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        # Windows Runner 曾在 npm ci 阶段触发 "Exit handler never called"；跨平台矩阵保留 npm install。
+        # lockfile 仍用于约束解析结果，且后续步骤会显式校验 TypeScript 安装。
         run: npm install --include=dev --production=false --no-audit --no-fund
 
       - name: Verify TypeScript dependency

@@ -1,9 +1,10 @@
 import { expect } from 'chai';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import { promises as fs } from 'fs';
 
 import { DiskMonitor } from '../../../src/monitors/disk-monitor';
+
+const nodeFs = require('fs') as typeof import('fs');
+const mutableNodeFs = nodeFs as any;
 
 describe('DiskMonitor 数据转换', () => {
   it('应在指定挂载点配置下保留 mountPoint 字段的磁盘', () => {
@@ -62,6 +63,32 @@ describe('DiskMonitor 数据转换', () => {
     expect(parse('1.5')).to.equal(null);
     expect(parse('invalid')).to.equal(null);
   });
+
+  it('Linux 应异步汇总可读取的 ioerr_cnt', async () => {
+    const originalReaddir = fs.readdir;
+    const originalReadFile = fs.readFile;
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+
+    (fs as any).readdir = async () => ['sda', 'sdb'];
+    (fs as any).readFile = async (path: string) => path.includes('sda') ? '0x2\n' : '0\n';
+
+    try {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      const result = await (new DiskMonitor({} as any) as any).checkIOErrors();
+
+      expect(result).to.deep.equal({
+        hasErrors: true,
+        checked: true,
+        issues: ['Disk I/O errors detected (ioerr_cnt total: 2)']
+      });
+    } finally {
+      (fs as any).readdir = originalReaddir;
+      (fs as any).readFile = originalReadFile;
+      if (platformDescriptor) {
+        Object.defineProperty(process, 'platform', platformDescriptor);
+      }
+    }
+  });
 });
 
 describe('DiskMonitor healthCheck() ioErrors 检查', () => {
@@ -76,51 +103,29 @@ describe('DiskMonitor healthCheck() ioErrors 检查', () => {
     } as any;
   }
 
-  it('挂载点均可访问时 ioErrors 应为 true', async () => {
-    // 使用临时目录作为可访问的挂载点，不依赖真实系统状态
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'node-os-utils-test-'));
+  it('不应主动访问挂载路径，避免远程挂载阻塞事件循环', async () => {
+    const missingPath = '/node-os-utils-definitely-not-exist';
+    const originalAccessSync = nodeFs.accessSync;
+    let accessSyncCalls = 0;
+    const adapter = createDiskAdapter([
+      { device: '/dev/sdb1', mountPoint: missingPath, filesystem: 'ext4', options: 'rw' }
+    ]);
+    mutableNodeFs.accessSync = () => {
+      accessSyncCalls += 1;
+    };
+
     try {
-      const adapter = createDiskAdapter([
-        { device: '/dev/sda1', mountPoint: tempDir, filesystem: 'ext4', options: 'rw' }
-      ]);
       const result = await new DiskMonitor(adapter).healthCheck();
 
       expect(result.success).to.be.true;
       if (result.success) {
-        expect(result.data.checks.ioErrors).to.be.true;
+        expect(result.data.issues.join(' ')).not.to.include('Mount point not accessible');
       }
     } finally {
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      mutableNodeFs.accessSync = originalAccessSync;
     }
-  });
 
-  it('存在不可访问的挂载点时 ioErrors 应为 false 并记入 issues', async () => {
-    const missingPath = path.join(os.tmpdir(), 'node-os-utils-definitely-not-exist');
-    const adapter = createDiskAdapter([
-      { device: '/dev/sdb1', mountPoint: missingPath, filesystem: 'ext4', options: 'rw' }
-    ]);
-    const result = await new DiskMonitor(adapter).healthCheck();
-
-    expect(result.success).to.be.true;
-    if (result.success) {
-      expect(result.data.checks.ioErrors).to.be.false;
-      expect(result.data.issues.join(' ')).to.include(`Mount point not accessible: ${missingPath}`);
-      expect(result.data.status).to.equal('critical');
-    }
-  });
-
-  it('配置排除的文件系统类型不参与可访问性检查', async () => {
-    const missingPath = path.join(os.tmpdir(), 'node-os-utils-definitely-not-exist');
-    const adapter = createDiskAdapter([
-      // proc 在默认 excludeTypes 中，即使路径不可访问也不应误报
-      { device: 'proc', mountPoint: missingPath, filesystem: 'proc', options: 'rw' }
-    ]);
-    const result = await new DiskMonitor(adapter).healthCheck();
-
-    expect(result.success).to.be.true;
-    if (result.success) {
-      expect(result.data.checks.ioErrors).to.be.true;
-    }
+    expect(accessSyncCalls).to.equal(0);
   });
 
   it('挂载点数据源不可用时保守保持 ioErrors 为 true', async () => {

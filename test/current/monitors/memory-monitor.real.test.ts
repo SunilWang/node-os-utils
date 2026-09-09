@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import * as os from 'os'
 import { OSUtils } from '../../../src'
+import { ErrorCode } from '../../../src/types/errors'
 import { RealCommandTestBase as Base } from '../real-command-base'
 
 describe('Memory Monitor 真实运行时契约', function () {
@@ -49,7 +50,7 @@ describe('Memory Monitor 真实运行时契约', function () {
   it('swap 应返回非负的交换空间字段或明确不支持', async function () {
     const result = await utils.memory.swap()
     if (!result.success) {
-      expect(result.error.code).to.equal('PLATFORM_NOT_SUPPORTED')
+      expect(result.error.code).to.equal(ErrorCode.PLATFORM_NOT_SUPPORTED)
       return
     }
     const swap = result.data

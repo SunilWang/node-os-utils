@@ -303,7 +303,9 @@ export interface SystemConfig extends MonitorConfig {
   includeUptime?: boolean;
 
   /**
-   * 是否包含系统信息
+   * 是否启用系统基本信息采集。
+   *
+   * 设为 false 时，SystemMonitor.info() 返回平台不支持错误结果，概览中的相关字段降级。
    */
   includeSystemInfo?: boolean;
 

@@ -132,7 +132,7 @@ export class CacheManager {
     }
 
     // 检查是否过期
-    if (Date.now() > item.expiry) {
+    if (Date.now() >= item.expiry) {
       this.cache.delete(key);
       this.stats.misses++;
       this.stats.evictions++;
@@ -216,7 +216,7 @@ export class CacheManager {
     }
 
     // 检查是否过期
-    if (Date.now() > item.expiry) {
+    if (Date.now() >= item.expiry) {
       this.cache.delete(key);
       this.stats.evictions++;
       this.updateStats();
@@ -375,7 +375,7 @@ export class CacheManager {
     const keysToDelete: string[] = [];
 
     for (const [key, item] of this.cache) {
-      if (now > item.expiry) {
+      if (now >= item.expiry) {
         keysToDelete.push(key);
       }
     }

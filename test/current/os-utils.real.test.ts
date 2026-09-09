@@ -128,14 +128,18 @@ describe('OSUtils 真实平台聚合测试', function() {
   })
 
   it('应暴露能力检查、缓存管理和销毁 API', async function() {
-    const capabilities = await utils.checkPlatformCapabilities()
-    expect(capabilities.platform).to.equal(RealCommandTestBase.platform())
-    expect(capabilities.capabilities.features).to.be.an('array')
-    utils.clearCache()
-    const before = utils.getCacheStats()
-    expect(before.size).to.equal(0)
-    utils.clearCache()
-    expect(utils.getCacheStats().size).to.equal(0)
-    utils.destroy()
+    const disposable = new OSUtils({ cacheEnabled: false, timeout: 15000 })
+    try {
+      const capabilities = await disposable.checkPlatformCapabilities()
+      expect(capabilities.platform).to.equal(RealCommandTestBase.platform())
+      expect(capabilities.capabilities.features).to.be.an('array')
+      disposable.clearCache()
+      const before = disposable.getCacheStats()
+      expect(before.size).to.equal(0)
+      disposable.clearCache()
+      expect(disposable.getCacheStats().size).to.equal(0)
+    } finally {
+      disposable.destroy()
+    }
   })
 })

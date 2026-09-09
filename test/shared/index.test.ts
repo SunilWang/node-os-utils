@@ -148,6 +148,40 @@ describe('OSUtils 入口类', () => {
     expect(overview.processes?.running).to.equal(120);
   });
 
+  it('system.overview 应复用 CPU Monitor 的 excludeIowait 口径', async () => {
+    const adapter = createAdapterStub();
+    adapter.getSystemInfo = async () => ({ hostname: 'test-host', platform: 'test', processCount: 1 });
+    adapter.getSystemUptime = async () => ({ uptimeSeconds: 3600 });
+    adapter.getSystemLoad = async () => ({ load1: 0.1, load5: 0.1, load15: 0.1 });
+    adapter.getCPUInfo = async () => ({ cores: 4 });
+    adapter.getCPUUsage = async () => ({ overall: 95, iowait: 20 });
+    adapter.getMemoryInfo = async () => ({ total: 1000, used: 500, available: 500, free: 500 });
+    adapter.getDiskUsage = async () => ([{
+      device: '/dev/test',
+      mountPoint: '/',
+      filesystem: 'testfs',
+      total: 1000,
+      used: 500,
+      available: 500
+    }]);
+    adapter.getNetworkStats = async () => ([]);
+    (AdapterFactory as any).create = () => adapter;
+
+    const utils = new OSUtilsClass({
+      platform: 'test',
+      cpu: { excludeIowait: true }
+    });
+    const cpuResult = await utils.cpu.usage();
+    const systemResult = await utils.system.overview();
+
+    expect(cpuResult.success).to.equal(true);
+    expect(systemResult.success).to.equal(true);
+    if (cpuResult.success && systemResult.success) {
+      expect(cpuResult.data).to.equal(75);
+      expect(systemResult.data.resources.cpuUsage).to.equal(cpuResult.data);
+    }
+  });
+
   it('healthCheck 汇总健康状态并计算总体结果', async () => {
     const utils = new OSUtilsClass({ platform: 'test' });
 

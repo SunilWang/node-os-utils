@@ -10,6 +10,7 @@ import {
   longTest
 } from '../shared/utils/test-base'
 import { OSUtils } from '../../src'
+import { ErrorCode } from '../../src/types/errors'
 
 // 只在macOS系统上运行这些测试
 describe('macOS System Tests', function() {
@@ -317,7 +318,7 @@ describe('macOS System Tests', function() {
       // 如果没有权限，应该优雅地处理
       if (!result.success) {
         expect(result.error).to.exist
-        expect(result.error.code).to.be.oneOf(['PERMISSION_DENIED', 'NOT_SUPPORTED'])
+        expect(result.error.code).to.be.oneOf([ErrorCode.PERMISSION_DENIED, 'NOT_SUPPORTED'])
       }
     }))
 

@@ -569,6 +569,8 @@ if (currentProc.success && currentProc.data) {
 
 所有基于 PID 的进程查询都会先校验运行时参数，再调用平台命令。`kill()` 支持 `TERM` / `SIGTERM` 等信号名称或十进制信号编号。为避免误向进程组广播信号，所有平台的 `kill()` 均只接受正安全整数 PID；运行时参数非法时返回 `data: false`，且参数不会传入 shell。Windows 会将 `SIGKILL` / `KILL` / `9` 映射为强制 `taskkill`。
 
+`ProcessInfo.startTime` 和 `ProcessInfo.runtime` 均为可选字段。平台无法提供或解析进程启动时间时，两者会返回 `undefined`；调用方执行数值运算前必须先判断字段是否存在。
+
 ### 🖥️ 系统监控器
 
 通用系统信息和健康监控。
@@ -606,13 +608,15 @@ if (users.success) {
 | `info()` | `Promise<MonitorResult<SystemInfo>>` | 完整的系统信息 | ✅ 全部 |
 | `uptime()` | `Promise<MonitorResult<{ uptime: number; uptimeFormatted: string; bootTime: number }>>` | 运行时间与启动时间戳 | ✅ 全部 |
 | `load()` | `Promise<MonitorResult<LoadAverage & { normalized: LoadAverage; status: 'low' | 'normal' | 'high' | 'critical' }>>` | 系统负载与状态 | ⚠️ 有限 |
-| `users()` | `Promise<MonitorResult<Array<{ username: string; terminal: string; host: string; loginTime: number }>>>` | 当前登录用户 | ⚠️ 平台 |
+| `users()` | `Promise<MonitorResult<Array<{ username: string; terminal: string; host: string; loginTime?: number }>>>` | 当前登录用户 | ⚠️ 平台 |
 | `services()` | `Promise<MonitorResult<Array<{ name: string; status: string; enabled: boolean }>>>` | 服务状态（需配置开启） | ⚠️ 有限 |
 | `overview()` | `Promise<MonitorResult<{ system: { hostname: string; platform: string; uptime: string; loadStatus: string }; resources: { cpuUsage: number; memoryUsage: number; diskUsage: number; networkActivity: boolean }; counts: { processes: number; users: number; services?: number }; health: { status: 'healthy' | 'warning' | 'critical'; issues: string[] } }>>` | 综合概览 | ⚠️ 有限 |
 | `time()` | `Promise<MonitorResult<{ current: number; timezone: string; utcOffset: number; formatted: string; bootTime?: number }>>` | 当前时间信息 | ✅ 全部 |
 | `healthCheck()` | `Promise<MonitorResult<{ status: 'healthy' | 'warning' | 'critical'; checks: Record<string, boolean>; issues: string[]; score: number }>>` | 系统健康报告 | ⚠️ 有限 |
 
 `overview().resources.networkActivity` 表示自上一次未命中缓存的概览采样以来，网卡累计收发字节数是否增加。首次采样、计数器重置或网络统计不可用时返回 `false`。
+
+平台缺少登录时间或解析失败时，用户信息中的 `loginTime` 为可选字段。将 `system.includeSystemInfo` 设为 `false`，或调用 `withSystemInfo(false)` 后，`info()` 会返回失败的 `MonitorResult`，`overview()` 中被禁用的主机名和平台字段为 `unknown`。
 
 ## 🌍 平台兼容性
 

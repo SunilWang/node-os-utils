@@ -11,6 +11,7 @@ import {
   PerformanceMonitor
 } from '../shared/utils/test-base'
 import { OSUtils } from '../../src'
+import { ErrorCode } from '../../src/types/errors'
 
 // 只在Windows系统上运行这些测试
 describe('Windows System Tests', function() {
@@ -55,7 +56,7 @@ describe('Windows System Tests', function() {
 
         if (!result.success) {
           expect(result.error).to.exist
-          expect(result.error!.code).to.be.oneOf(['NOT_SUPPORTED', 'PLATFORM_NOT_SUPPORTED'])
+          expect(result.error!.code).to.be.oneOf(['NOT_SUPPORTED', ErrorCode.PLATFORM_NOT_SUPPORTED])
         } else if (result.success) {
           expect(result.data).to.exist
           expect(result.data.load1).to.be.a('number').and.at.least(0)
@@ -341,7 +342,7 @@ describe('Windows System Tests', function() {
 
       if (!result.success) {
         expect(result.error).to.exist
-        expect(result.error!.code).to.be.oneOf(['PERMISSION_DENIED', 'NOT_SUPPORTED'])
+        expect(result.error!.code).to.be.oneOf([ErrorCode.PERMISSION_DENIED, 'NOT_SUPPORTED'])
       }
     }))
 

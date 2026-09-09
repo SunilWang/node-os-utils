@@ -168,6 +168,34 @@ describe('SystemMonitor 健康检查', () => {
       expect(result.data.issues.join(' ')).to.include('uptime unavailable');
     }
   });
+
+  it('显式关闭负载和运行时间检查时应跳过且不扣分', async () => {
+    const adapter = {
+      getPlatform: () => 'linux',
+      isSupported: () => true,
+      getSystemInfo: async () => ({ hostname: 'test-host', platform: 'linux', processCount: 1 }),
+      getSystemLoad: async () => { throw new Error('关闭后不应调用负载适配器'); },
+      getSystemUptime: async () => { throw new Error('关闭后不应调用运行时间适配器'); },
+      getCPUUsage: async () => ({ overall: 10 }),
+      getMemoryInfo: async () => ({ total: 1000, used: 100 }),
+      getDiskUsage: async () => ([{ usagePercentage: 10 }]),
+      getNetworkStats: async () => ([])
+    } as any;
+
+    const result = await new SystemMonitor(adapter, {
+      includeLoad: false,
+      includeUptime: false
+    }).healthCheck();
+
+    expect(result.success).to.equal(true);
+    if (result.success) {
+      expect(result.data.status).to.equal('healthy');
+      expect(result.data.score).to.equal(100);
+      expect(result.data.checks.load).to.equal(true);
+      expect(result.data.checks.uptime).to.equal(true);
+      expect(result.data.issues).to.deep.equal([]);
+    }
+  });
 });
 
 describe('SystemMonitor overview() 资源聚合', () => {
@@ -228,6 +256,26 @@ describe('SystemMonitor overview() 资源聚合', () => {
       // 未受影响的指标仍应正常聚合
       expect(result.data.resources.memoryUsage).to.equal(50);
       expect(result.data.system.hostname).to.equal('test-host');
+    }
+  });
+
+  it('withSystemInfo(false) 后不应复用已缓存概览中的 hostname', async () => {
+    const monitor = new SystemMonitor(createOverviewAdapter(), { cacheTTL: 60000 });
+    const first = await monitor.overview();
+
+    expect(first.success).to.be.true;
+    if (first.success) {
+      expect(first.data.system.hostname).to.equal('test-host');
+    }
+
+    monitor.withSystemInfo(false);
+    const second = await monitor.overview();
+
+    expect(second.success).to.be.true;
+    if (second.success) {
+      expect(second.cached).to.be.false;
+      expect(second.data.system.hostname).to.equal('unknown');
+      expect(second.data.system.platform).to.equal('unknown');
     }
   });
 });

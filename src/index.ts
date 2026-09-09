@@ -1,5 +1,5 @@
 /**
- * node-os-utils v2.0.0
+ * node-os-utils v3.0.0
  *
  * 现代化的跨平台操作系统监控工具库
  * TypeScript 重构版本，提供全面的系统监控功能
@@ -120,7 +120,13 @@ export class OSUtils {
    */
   get system(): SystemMonitor {
     if (!this._system) {
-      this._system = new SystemMonitor(this.adapter, this.config.system, this.cache);
+      this._system = new SystemMonitor(this.adapter, this.config.system, this.cache, {
+        cpuUsage: () => this.cpu.usage(),
+        memoryUsage: () => this.memory.usage(),
+        diskUsage: () => this.disk.usage(),
+        // networkActivity 比较相邻 overview 采样，需绕过更内层的统计缓存获取新计数。
+        networkStats: () => this.network.statsAsync({ skipCache: true })
+      });
     }
     return this._system;
   }

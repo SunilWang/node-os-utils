@@ -2,7 +2,18 @@
 
 本文件记录 `node-os-utils` 各版本的重要变更。
 
-## [2.0.6] - 2026-09-07
+## [3.0.0] - 2026-09-09
+
+### 破坏性变更
+
+- `ProcessInfo.startTime`、`ProcessInfo.runtime` 与 `system.users()` 的 `loginTime`
+  改为可选字段。适配器无法提供或解析时间时返回 `undefined`，调用方需先判断字段是否存在。
+- `ProcessMonitor.kill()` 在所有平台上仅接受正安全整数 PID，不再保留 Unix 的 PID `0`
+  与负 PID 进程组广播语义，避免误终止调用方未明确指定的进程。
+- `SystemMonitor.withSystemInfo(false)` 与 `system.includeSystemInfo: false` 现在会真正禁用
+  `system.info()`；系统概览中的主机名与平台会相应降级为 `unknown`。
+- `CommandExecutor.executeStream()` 在 `shell: false` 时要求使用
+  `{ executable, args }` 结构化命令，避免命令字符串拆分破坏空参数、引号和反斜杠。
 
 ### 修复
 
@@ -34,6 +45,10 @@
 - 修复系统健康检查忽略负载、运行时间和服务检查失败结果的问题。
 - 修复高负载状态下健康检查明细仍标记为通过的问题。
 - 修复运行时 `withCaching(enabled, ttl)` 未同步具体监控器缓存 TTL 的问题。
+- 修复测试运行器在工作目录变化或没有发现任何测试文件时仍以成功状态退出的问题。
+- 修复流式命令使用两套超时机制，以及 Windows 清理进程树失败时可能触发未处理错误的问题。
+- 修复系统概览绕过资源监控器配置、归一化与缓存，以及运行时切换系统信息开关后复用旧概览缓存的问题。
+- 修复显式关闭系统负载或运行时间采集后，健康检查仍将其误判为采集失败并扣分的问题。
 - 补充 ESLint 配置，恢复 `npm run lint:check` 的静态检查能力。
 
 ### 兼容性
@@ -44,15 +59,13 @@
 - Windows 网络接口信息由对象 map 归一化为数组结构，与类型声明及其他平台一致。
 - 返回固定占位值的同步兼容方法（`disk.free`/`disk.used`/`network.inOut`/`network.stats`）
   已标记 `@deprecated`，请迁移到对应的异步方法。
-- `ProcessInfo` 的 `startTime`、`runtime` 及用户登录时间字段改为可选，
-  解析失败时返回 `undefined` 而非当前时间。
 - `config.timeout` 现在同时作用于监控操作层（默认 10 秒），超时返回 `TIMEOUT`
   错误结果而非无限等待。
 
 ### 验证
 
-- 完成 TypeScript 构建及单元测试：244 passing；42 项平台相关测试因当前运行环境跳过。
-- 通过 macOS 平台集成测试：19 passing。
+- 通过 TypeScript 构建、ESLint 检查及完整 `npm test`：388 passing。
+- 其中共享单元测试 248 passing，当前平台契约测试 70 passing，macOS 集成测试 70 passing。
 
 ## [2.0.5] - 2026-09-06
 

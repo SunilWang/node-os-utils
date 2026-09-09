@@ -376,37 +376,74 @@ describe('MacOSAdapter 内部解析逻辑', () => {
   it('readFile/fileExists 应基于 fs API 正常工作', async () => {
     const adapter = new MacOSAdapter();
     const tmpPath = path.join(os.tmpdir(), `node-os-utils-readfile-${Date.now()}`);
+    const tmpDirectory = path.join(os.tmpdir(), `node-os-utils-directory-${Date.now()}`);
     fsSync.writeFileSync(tmpPath, 'hello');
+    fsSync.mkdirSync(tmpDirectory);
 
     try {
       expect(await adapter.readFile(tmpPath)).to.equal('hello');
       expect(await adapter.fileExists(tmpPath)).to.be.true;
+      expect(await adapter.fileExists(tmpDirectory)).to.be.true;
       expect(await adapter.fileExists('/nonexistent/path/to/file')).to.be.false;
     } finally {
       fsSync.rmSync(tmpPath, { force: true });
+      fsSync.rmSync(tmpDirectory, { recursive: true, force: true });
     }
   });
 
-  it('解析进程列表时应将末尾 args 列整体保留，含空格路径不会导致列错位', () => {
+  it('解析进程列表时应以完整 comm 为名称，并保留完整 args', () => {
     const adapter = new MacOSAdapter();
     const internal = adapter as any;
 
-    const output = [
-      '  123     1  12.5  3.4  20480 S    user   /Library/My App/bin/tool --flag',
+    const summaryOutput = [
+      '  123     1  12.5  3.4  20480 S    user   /Library/My App/bin/tool',
       '  124     1   0.0  0.1   1024 R    root   /usr/sbin/syslogd'
     ].join('\n');
+    const argsOutput = [
+      '  123 /Library/My App/bin/tool --flag',
+      '  124 custom-argv-zero --daemon'
+    ].join('\n');
 
-    const result = internal.parseProcessList(output);
+    const result = internal.parseProcessList(summaryOutput, argsOutput);
 
     expect(result).to.have.lengthOf(2);
     expect(result[0].pid).to.equal(123);
     expect(result[0].ppid).to.equal(1);
+    expect(result[0].name).to.equal('/Library/My App/bin/tool');
     expect(result[0].cpuUsage).to.be.closeTo(12.5, 0.0001);
     expect(result[0].memoryUsage).to.equal(20480 * 1024);
     expect(result[0].command).to.equal('/Library/My App/bin/tool --flag');
+    expect(result[1].name).to.equal('/usr/sbin/syslogd');
     expect(result[1].user).to.equal('root');
     expect(result[1].state).to.equal('R');
-    expect(result[1].command).to.equal('/usr/sbin/syslogd');
+    expect(result[1].command).to.equal('custom-argv-zero --daemon');
+  });
+
+  it('getProcesses 应并行获取 comm 与 args 并按 PID 合并', async () => {
+    const adapter = new MacOSAdapter();
+    const internal = adapter as any;
+    const commands: string[] = [];
+
+    internal.executeCommand = async (command: string) => {
+      commands.push(command);
+      return {
+        stdout: command.includes('comm=')
+          ? '  123 1 0.0 0.1 1024 S user /Applications/My App/tool\n'
+          : '  123 /Applications/My App/tool --flag\n',
+        stderr: '',
+        exitCode: 0,
+        platform: 'darwin',
+        executionTime: 1,
+        command
+      };
+    };
+
+    const result = await adapter.getProcesses();
+
+    expect(commands).to.have.members([internal.processSummaryCommand, internal.processArgsCommand]);
+    expect(result).to.have.lengthOf(1);
+    expect(result[0].name).to.equal('/Applications/My App/tool');
+    expect(result[0].command).to.equal('/Applications/My App/tool --flag');
   });
 
   it('应当将 df -h 的 Bi/Ki/Mi/Gi/Ti 单位正确转换为字节', () => {

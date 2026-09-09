@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import { OSUtils } from '../../../src'
+import { ErrorCode } from '../../../src/types/errors'
 import { RealCommandTestBase as Base } from '../real-command-base'
 
 describe('Network Monitor 真实运行时契约', function () {
@@ -44,9 +45,9 @@ describe('Network Monitor 真实运行时契约', function () {
 
   it('connections、bandwidth 和 healthCheck 应返回可诊断结果', async function () {
     const connections = await utils.network.connections()
-    expect(connections.success || connections.error.code === 'PLATFORM_NOT_SUPPORTED').to.equal(true)
+    expect(connections.success || connections.error.code === ErrorCode.PLATFORM_NOT_SUPPORTED).to.equal(true)
     const bandwidthResult = await utils.network.bandwidth()
-    expect(bandwidthResult.success || bandwidthResult.error.code === 'PLATFORM_NOT_SUPPORTED').to.equal(true)
+    expect(bandwidthResult.success || bandwidthResult.error.code === ErrorCode.PLATFORM_NOT_SUPPORTED).to.equal(true)
     if (bandwidthResult.success) {
       expect(bandwidthResult.data.interfaces).to.be.an('array')
       bandwidthResult.data.interfaces.forEach((item: any) => { Base.assertNonNegative(item.rxSpeed, 'network.rxSpeed'); Base.assertNonNegative(item.txSpeed, 'network.txSpeed') })

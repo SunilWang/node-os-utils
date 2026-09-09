@@ -7,6 +7,18 @@ import { MonitorError, ErrorCode } from '../types/errors';
 const execAsync = promisify(exec);
 
 /**
+ * 不经 shell 执行的流式命令。
+ *
+ * 可执行文件与参数保持结构化传递，避免字符串拆分破坏空参数、引号或反斜杠。
+ */
+export interface StreamCommand {
+  /** 可执行文件路径或名称 */
+  executable: string;
+  /** 原样传递给可执行文件的参数 */
+  args?: string[];
+}
+
+/**
  * 命令执行器
  *
  * 负责在不同平台上执行系统命令，提供统一的接口和错误处理
@@ -190,7 +202,10 @@ export class CommandExecutor {
     if (process.platform === 'win32') {
       if (pid !== undefined) {
         try {
-          spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' }).unref();
+          const taskkill = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+          // spawn 启动失败通过异步 error 事件上报，必须主动消费，避免清理失败导致宿主进程崩溃。
+          taskkill.once('error', () => undefined);
+          taskkill.unref();
         } catch {
           // 进程已退出时忽略错误
         }
@@ -272,10 +287,18 @@ export class CommandExecutor {
   }
 
   /**
-   * 执行命令并流式处理输出
+   * 执行命令并流式处理输出。
+   *
+   * 使用 shell 时传入命令字符串；禁用 shell 时必须传入结构化命令，确保参数
+   * 原样交给 spawn，不经过有损的字符串解析。
+   * @param command 命令字符串或不经 shell 的结构化命令
+   * @param onData 标准输出或标准错误数据回调
+   * @param options 命令执行选项
+   * @returns 命令执行结果
+   * @throws {MonitorError} 命令配置非法、执行失败或超时时抛出
    */
   async executeStream(
-    command: string,
+    command: string | StreamCommand,
     onData: (data: string, isError: boolean) => void,
     options: ExecuteOptions = {}
   ): Promise<CommandResult> {
@@ -286,13 +309,15 @@ export class CommandExecutor {
       env: { ...this.defaultOptions.env, ...options.env }
     };
     const startTime = Date.now();
+    const commandText = typeof command === 'string'
+      ? command
+      : this.formatStreamCommand(command);
 
     return new Promise((resolve, reject) => {
       const spawnOptions: any = {
         shell: mergedOptions.shell,
         env: mergedOptions.env,
         cwd: mergedOptions.cwd,
-        timeout: mergedOptions.timeout,
         // POSIX 独立进程组用于超时时终止整棵进程树；Windows 使用 taskkill /T。
         detached: process.platform !== 'win32'
       };
@@ -300,29 +325,35 @@ export class CommandExecutor {
       let child: ReturnType<typeof spawn>;
 
       if (spawnOptions.shell) {
-        child = spawn(command, spawnOptions);
-      } else {
-        const tokens = this.tokenizeCommand(command);
-        const executable = tokens.shift();
-
-        if (!executable) {
+        if (typeof command !== 'string') {
           reject(new MonitorError(
-            'Invalid command provided for execution',
+            'Structured stream commands require shell to be disabled',
             ErrorCode.INVALID_CONFIG,
             this.platform,
-            { command }
+            { command: commandText }
+          ));
+          return;
+        }
+        child = spawn(command, spawnOptions);
+      } else {
+        if (typeof command === 'string' || !command.executable) {
+          reject(new MonitorError(
+            'Shell-free stream execution requires { executable, args }',
+            ErrorCode.INVALID_CONFIG,
+            this.platform,
+            { command: commandText }
           ));
           return;
         }
 
-        child = spawn(executable, tokens, spawnOptions);
+        child = spawn(command.executable, command.args ?? [], spawnOptions);
       }
 
       let stdout = '';
       let stderr = '';
       let timedOut = false;
       let settled = false;
-      // 流式执行不会经过 execAsync 的超时机制，因此在子进程层补充定时终止。
+      // 流式执行统一由该定时器负责超时，避免 spawn 内置 timeout 先杀父进程后干扰进程树清理。
       const timeoutTimer = mergedOptions.timeout && mergedOptions.timeout > 0
         ? setTimeout(() => {
           timedOut = true;
@@ -339,7 +370,7 @@ export class CommandExecutor {
               exitCode: 1,
               platform: this.platform,
               executionTime: Date.now() - startTime,
-              command
+              command: commandText
             }
           ));
         }, mergedOptions.timeout)
@@ -370,7 +401,7 @@ export class CommandExecutor {
           exitCode,
           platform: this.platform,
           executionTime,
-          command
+          command: commandText
         };
 
         if (timedOut) {
@@ -404,7 +435,7 @@ export class CommandExecutor {
           ErrorCode.COMMAND_FAILED,
           this.platform,
           {
-            command,
+            command: commandText,
             error: error.message,
             executionTime
           }
@@ -514,57 +545,16 @@ export class CommandExecutor {
   }
 
   /**
-   * 将已构建的命令字符串拆分为 spawn 所需的参数。
+   * 生成用于结果和错误详情的流式命令文本。
    *
-   * Windows 参数可能使用连续双引号表示参数中的字面量双引号，不能用
-   * 简单的正则按空白切分，否则 Node 的 `-e` 脚本会被拆成多个参数。
-   * @param command 待解析的命令字符串
-   * @returns 可传给 spawn 的参数列表
+   * 该文本仅用于诊断，不参与进程创建；实际参数始终以数组形式传给 spawn。
+   * @param command 结构化流式命令
+   * @returns 便于诊断的命令文本
    */
-  private tokenizeCommand(command: string): string[] {
-    const tokens: string[] = [];
-    let token = '';
-    let quoteChar: '"' | "'" | null = null;
-
-    for (let index = 0; index < command.length; index += 1) {
-      const char = command[index];
-
-      if (char === '"' || char === "'") {
-        if (quoteChar === '"' && char === '"' && command[index + 1] === '"') {
-          token += '"';
-          index += 1;
-        } else if (quoteChar === null) {
-          quoteChar = char;
-        } else if (quoteChar === char) {
-          quoteChar = null;
-        } else {
-          token += char;
-        }
-        continue;
-      }
-
-      if (char === '\\' && command[index + 1] === '"' && quoteChar === '"') {
-        token += '"';
-        index += 1;
-        continue;
-      }
-
-      if (/\s/.test(char) && quoteChar === null) {
-        if (token) {
-          tokens.push(token);
-          token = '';
-        }
-        continue;
-      }
-
-      token += char;
-    }
-
-    if (token) {
-      tokens.push(token);
-    }
-
-    return tokens;
+  private formatStreamCommand(command: StreamCommand): string {
+    return [command.executable, ...(command.args ?? [])]
+      .map(part => JSON.stringify(part))
+      .join(' ');
   }
 
   /**

@@ -16,9 +16,9 @@ import { isValidPositiveProcessId, sendProcessSignal } from '../utils/process-ki
  */
 export class MacOSAdapter extends BasePlatformAdapter {
   private executor: CommandExecutor;
-  // args 列必须放在最后：macOS 的 comm/args 是完整路径且可能含空格（如 /Library/My App），
-  // 放在中间会导致后续列按空白切分时错位。
-  private readonly processListCommand = 'ps -axo pid=,ppid=,%cpu=,%mem=,rss=,stat=,user=,args=';
+  // comm 和 args 都可能含空格，分别放在各自输出的最后一列后再按 PID 合并。
+  private readonly processSummaryCommand = 'ps -axww -o pid=,ppid=,%cpu=,%mem=,rss=,stat=,user=,comm=';
+  private readonly processArgsCommand = 'ps -axww -o pid=,args=';
 
   constructor() {
     super('darwin');
@@ -66,7 +66,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 检查文件是否存在
+   * 检查路径是否存在；文件和目录均视为存在
    */
   async fileExists(path: string): Promise<boolean> {
     try {
@@ -243,10 +243,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
    */
   async getProcesses(): Promise<any> {
     try {
-      // 进程数较多时输出可能超过默认 1MB maxBuffer，显式放宽到 10MB
-      const result = await this.executeCommand(this.processListCommand, { maxBuffer: 10 * 1024 * 1024 });
-      this.validateCommandResult(result, 'ps command');
-      return this.parseProcessList(result.stdout);
+      return await this.collectProcessList();
     } catch (error) {
       throw this.createCommandError('getProcesses', error);
     }
@@ -729,27 +726,49 @@ export class MacOSAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * 解析 ps -axo pid=,ppid=,%cpu=,%mem=,rss=,stat=,user=,args= 输出为进程列表
+   * 并行读取进程摘要和完整命令行，再按 PID 合并。
    *
-   * 前 7 列均为不含空白的固定字段，从左锚定；剩余部分整体作为命令行，
-   * 避免 macOS 下 args 是含空格的全路径（如 /Library/My App）时列错位。
+   * @returns 以 comm 为名称、args 为命令行的进程列表
    */
-  private parseProcessList(output: string): any {
-    const lines = output.split('\n').filter(line => line.trim());
+  private async collectProcessList(): Promise<any[]> {
+    const options = { maxBuffer: 10 * 1024 * 1024 };
+    const [summaryResult, argsResult] = await Promise.all([
+      this.executeCommand(this.processSummaryCommand, options),
+      this.executeCommand(this.processArgsCommand, options)
+    ]);
+
+    this.validateCommandResult(summaryResult, 'ps process summary');
+    this.validateCommandResult(argsResult, 'ps process args');
+    return this.parseProcessList(summaryResult.stdout, argsResult.stdout);
+  }
+
+  /**
+   * 解析两份 ps 输出并按 PID 关联。
+   *
+   * comm/args 均位于各自输出的最后一列，因此路径中的空格不会破坏前置字段。
+   *
+   * @param summaryOutput 以 comm 结尾的进程摘要
+   * @param argsOutput 以 args 结尾的 PID 与命令行列表
+   * @returns 解析后的进程列表
+   */
+  private parseProcessList(summaryOutput: string, argsOutput: string): any[] {
+    const commands = this.parseProcessCommands(argsOutput);
+    const lines = summaryOutput.split('\n').filter(line => line.trim());
     const processes: any[] = [];
 
     for (const line of lines) {
-      const match = line.trim().match(/^(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s*(.*)$/);
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(.+)$/);
       if (!match) {
         continue;
       }
 
-      const [, pid, ppid, pcpu, pmem, rss, state, user, args] = match;
-      const command = args.trim();
-      const name = command.split(/\s+/)[0] || command;
+      const [, pid, ppid, pcpu, pmem, rss, state, user, comm] = match;
+      const numericPid = this.safeParseInt(pid);
+      const name = comm.trim();
+      const command = commands.get(numericPid) || name;
 
       processes.push({
-        pid: this.safeParseInt(pid),
+        pid: numericPid,
         ppid: this.safeParseInt(ppid),
         name,
         comm: name,
@@ -763,6 +782,27 @@ export class MacOSAdapter extends BasePlatformAdapter {
     }
 
     return processes;
+  }
+
+  /**
+   * 将 `ps -axww -o pid=,args=` 输出转换为 PID 到完整命令行的映射。
+   *
+   * @param output ps 命令行输出
+   * @returns PID 到完整 args 的映射
+   */
+  private parseProcessCommands(output: string): Map<number, string> {
+    const commands = new Map<number, string>();
+
+    for (const line of output.split('\n')) {
+      const match = line.trim().match(/^(\d+)\s+(.+)$/);
+      if (!match) {
+        continue;
+      }
+
+      commands.set(this.safeParseInt(match[1]), match[2].trim());
+    }
+
+    return commands;
   }
 
   /**
@@ -949,9 +989,7 @@ export class MacOSAdapter extends BasePlatformAdapter {
    */
   async getProcessList(): Promise<any> {
     try {
-      // 进程数较多时输出可能超过默认 1MB maxBuffer，显式放宽到 10MB
-      const result = await this.executeCommand(this.processListCommand, { maxBuffer: 10 * 1024 * 1024 });
-      return this.parseProcessList(result.stdout);
+      return await this.collectProcessList();
     } catch (error) {
       throw this.createCommandError('getProcessList', error);
     }

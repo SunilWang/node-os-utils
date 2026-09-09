@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import * as os from 'os'
-import { MonitorError } from '../../src/types/errors'
+import { ErrorCode, MonitorError } from '../../src/types/errors'
 import { CommandExecutor } from '../../src/utils/command-executor'
 
 /**
@@ -69,13 +69,15 @@ export class RealCommandTestBase {
   /** 判断错误是否属于环境能力限制，可用于精确跳过。 */
   static isEnvironmentalError(error: unknown): boolean {
     if (!(error instanceof MonitorError)) return false
-    if (error.code === 'PERMISSION_DENIED' || error.code === 'PLATFORM_NOT_SUPPORTED' || error.code === 'NOT_AVAILABLE') {
+    if (error.code === ErrorCode.PERMISSION_DENIED ||
+      error.code === ErrorCode.PLATFORM_NOT_SUPPORTED ||
+      error.code === ErrorCode.NOT_AVAILABLE) {
       return true
     }
 
     // 只有明确能证明“命令不存在”时才允许跳过；泛化的 COMMAND_FAILED
     // 和 TIMEOUT 可能掩盖实现回归、死锁或输出解析错误，必须继续失败。
-    if (error.code !== 'COMMAND_FAILED') return false
+    if (error.code !== ErrorCode.COMMAND_FAILED) return false
 
     const diagnostic = [error.message, error.details?.stderr, error.details?.code]
       .filter(Boolean)

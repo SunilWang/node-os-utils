@@ -1,3 +1,6 @@
+import { promises as fs } from 'fs';
+import { join } from 'path';
+
 import { BaseMonitor } from '../core/base-monitor';
 import {
   MonitorResult,
@@ -518,29 +521,27 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
   /**
    * 检查磁盘 I/O 错误（best-effort，宁保守勿误报）
    *
-   * 数据源 1（仅 Linux）：累加 /sys/block/<device>/device/ioerr_cnt，>0 判定存在 I/O 错误；
-   * 数据源 2（跨平台）：对已挂载文件系统做可访问性检查，不可访问的挂载点判定为 I/O 异常。
-   * @returns 检查结果；checked=false 表示两个数据源均不可用，调用方应保守跳过
+   * 仅在 Linux 上累加 /sys/block/<device>/device/ioerr_cnt，>0 判定存在 I/O 错误。
+   * 不主动访问挂载路径，避免失联的 NFS/SMB/FUSE 挂载阻塞 Node.js 事件循环。
+   * @returns 检查结果；checked=false 表示无可用数据源，调用方应保守跳过
    */
   private async checkIOErrors(): Promise<{ hasErrors: boolean; checked: boolean; issues: string[] }> {
     const issues: string[] = [];
     let checked = false;
     let hasErrors = false;
 
-    // 数据源 1：Linux sysfs 的 ioerr_cnt 计数器（macOS/Windows 无 /sys，自动跳过）
+    // Linux sysfs 的 ioerr_cnt 计数器（macOS/Windows 无 /sys，自动跳过）
     if (process.platform === 'linux') {
       try {
-        const fs = require('fs');
-        const path = require('path');
         const sysBlockDir = '/sys/block';
-        const devices: string[] = fs.readdirSync(sysBlockDir);
+        const devices = await fs.readdir(sysBlockDir);
         let readableCounters = 0;
         let totalErrors = 0;
 
         for (const device of devices) {
-          const counterPath = path.join(sysBlockDir, device, 'device', 'ioerr_cnt');
+          const counterPath = join(sysBlockDir, device, 'device', 'ioerr_cnt');
           try {
-            const content = fs.readFileSync(counterPath, 'utf8').trim();
+            const content = (await fs.readFile(counterPath, 'utf8')).trim();
             const count = this.parseIOErrorCounter(content);
             if (count !== null) {
               readableCounters += 1;
@@ -559,35 +560,8 @@ export class DiskMonitor extends BaseMonitor<DiskInfo[]> {
           }
         }
       } catch {
-        // /sys/block 不可用（如容器环境），继续尝试挂载点检查
+        // /sys/block 不可用（如容器环境），保守跳过
       }
-    }
-
-    // 数据源 2：挂载点可访问性检查（mounts() 走缓存，不会重复发起系统调用）
-    try {
-      const mountsResult = await this.mounts();
-      if (mountsResult.success && mountsResult.data && mountsResult.data.length > 0) {
-        const fs = require('fs');
-        checked = true;
-
-        for (const mount of mountsResult.data) {
-          // 跳过配置排除的伪文件系统（proc/sysfs 等），避免误报
-          if (this.diskConfig.excludeTypes &&
-              this.diskConfig.excludeTypes.includes(mount.filesystem)) {
-            continue;
-          }
-
-          try {
-            // 仅做存在性检查（F_OK）：权限受限但挂载正常的目录不算 I/O 异常
-            fs.accessSync(mount.mountpoint, fs.constants.F_OK);
-          } catch {
-            hasErrors = true;
-            issues.push(`Mount point not accessible: ${mount.mountpoint}`);
-          }
-        }
-      }
-    } catch {
-      // 挂载点信息不可用，跳过该数据源
     }
 
     return { hasErrors, checked, issues };

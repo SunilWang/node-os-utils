@@ -568,6 +568,8 @@ if (currentProc.success && currentProc.data) {
 
 All PID-based process lookups validate runtime values before invoking platform commands. `kill()` accepts signal names such as `TERM` / `SIGTERM` or decimal signal numbers. To prevent accidental process-group broadcasts, `kill()` requires a positive safe-integer PID on every platform; invalid runtime values return `data: false` and are never passed to a shell. Windows maps `SIGKILL` / `KILL` / `9` to forced `taskkill`.
 
+`ProcessInfo.startTime` and `ProcessInfo.runtime` are optional. When a platform cannot provide or parse the process start time, both fields are `undefined`; callers must check them before numeric operations.
+
 ### 🖥️ System Monitor
 
 General system information and health monitoring.
@@ -605,13 +607,15 @@ if (users.success) {
 | `info()` | `Promise<MonitorResult<SystemInfo>>` | Complete system information | ✅ All |
 | `uptime()` | `Promise<MonitorResult<{ uptime: number; uptimeFormatted: string; bootTime: number }>>` | Uptime and derived timestamps | ✅ All |
 | `load()` | `Promise<MonitorResult<LoadAverage & { normalized: LoadAverage; status: 'low' | 'normal' | 'high' | 'critical' }>>` | Load averages and health status | ⚠️ Limited |
-| `users()` | `Promise<MonitorResult<Array<{ username: string; terminal: string; host: string; loginTime: number }>>>` | Currently logged users | ⚠️ Platform |
+| `users()` | `Promise<MonitorResult<Array<{ username: string; terminal: string; host: string; loginTime?: number }>>>` | Currently logged users | ⚠️ Platform |
 | `services()` | `Promise<MonitorResult<Array<{ name: string; status: string; enabled: boolean }>>>` | Service status (requires config) | ⚠️ Limited |
 | `overview()` | `Promise<MonitorResult<{ system: { hostname: string; platform: string; uptime: string; loadStatus: string }; resources: { cpuUsage: number; memoryUsage: number; diskUsage: number; networkActivity: boolean }; counts: { processes: number; users: number; services?: number }; health: { status: 'healthy' | 'warning' | 'critical'; issues: string[] } }>>` | Synthetic summary | ⚠️ Limited |
 | `time()` | `Promise<MonitorResult<{ current: number; timezone: string; utcOffset: number; formatted: string; bootTime?: number }>>` | Current system time metadata | ✅ All |
 | `healthCheck()` | `Promise<MonitorResult<{ status: 'healthy' | 'warning' | 'critical'; checks: Record<string, boolean>; issues: string[]; score: number }>>` | System health overview | ⚠️ Limited |
 
 `overview().resources.networkActivity` indicates whether interface byte counters increased since the previous uncached overview sample. The first sample, a counter reset, or unavailable network statistics returns `false`.
+
+User `loginTime` is optional when the platform timestamp is missing or cannot be parsed. Setting `system.includeSystemInfo` to `false`, or calling `withSystemInfo(false)`, makes `info()` return a failed `MonitorResult`; `overview()` reports `unknown` for the disabled hostname and platform fields.
 
 ## 🌍 Platform Compatibility
 

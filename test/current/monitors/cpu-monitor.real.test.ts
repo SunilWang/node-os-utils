@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import { OSUtils } from '../../../src'
+import { ErrorCode } from '../../../src/types/errors'
 import { RealCommandTestBase as Base } from '../real-command-base'
 
 describe('CPU Monitor 真实运行时契约', function () {
@@ -36,7 +37,7 @@ describe('CPU Monitor 真实运行时契约', function () {
   it('usageByCore 应与详细使用率保持相同的核心维度', async function () {
     const result = await utils.cpu.usageByCore()
     if (!result.success) {
-      expect(result.error.code).to.equal('PLATFORM_NOT_SUPPORTED')
+      expect(result.error.code).to.equal(ErrorCode.PLATFORM_NOT_SUPPORTED)
       return
     }
     expect(result.data).to.be.an('array').with.length.greaterThan(0)
@@ -50,8 +51,8 @@ describe('CPU Monitor 真实运行时契约', function () {
 
   it('frequency 和 cache 应遵循平台能力结果', async function () {
     const frequency = await utils.cpu.frequency()
-    expect(frequency.success || (!frequency.success && frequency.error.code === 'PLATFORM_NOT_SUPPORTED')).to.equal(true)
+    expect(frequency.success || (!frequency.success && frequency.error.code === ErrorCode.PLATFORM_NOT_SUPPORTED)).to.equal(true)
     const cache = await utils.cpu.getCacheInfo()
-    expect(cache.success || (!cache.success && cache.error.code === 'PLATFORM_NOT_SUPPORTED')).to.equal(true)
+    expect(cache.success || (!cache.success && cache.error.code === ErrorCode.PLATFORM_NOT_SUPPORTED)).to.equal(true)
   })
 })

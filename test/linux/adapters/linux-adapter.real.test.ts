@@ -60,20 +60,12 @@ function waitForExit(child: ChildProcess): Promise<void> {
   });
 }
 
-/** 仅在真实 Linux 主机运行，避免在其他平台伪造 Linux 命令结果。 */
-function requireLinux(): void {
-  if (process.platform !== 'linux') {
-    return;
-  }
-}
-
 describe('LinuxAdapter 真实系统调用', function () {
   this.timeout(15000);
   let adapter: LinuxAdapter;
 
   before(function () {
     if (process.platform !== 'linux') this.skip();
-    requireLinux();
     adapter = new LinuxAdapter();
   });
 

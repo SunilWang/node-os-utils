@@ -62,7 +62,9 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
   abstract readFile(path: string): Promise<string>;
 
   /**
-   * 检查文件是否存在
+   * 检查路径是否存在。
+   *
+   * 文件和目录均属于有效路径。
    */
   abstract fileExists(path: string): Promise<boolean>;
 

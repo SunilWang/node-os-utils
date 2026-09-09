@@ -49,6 +49,20 @@ describe('CacheManager Unit Tests', function() {
       }, shortTTL + 10)
     })
 
+    it('TTL为0时同一毫秒内也不应命中缓存', function() {
+      const originalNow = Date.now
+      Date.now = () => 1000
+
+      try {
+        cacheManager.set('zero-ttl', 'value', 0)
+
+        expect(cacheManager.get('zero-ttl')).to.be.undefined
+        expect(cacheManager.has('zero-ttl')).to.be.false
+      } finally {
+        Date.now = originalNow
+      }
+    })
+
     it('应该正确报告缓存命中状态', function() {
       const key = 'hit-test'
       const value = 'hit-value'

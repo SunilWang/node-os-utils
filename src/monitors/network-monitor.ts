@@ -483,7 +483,7 @@ export class NetworkMonitor extends BaseMonitor<NetworkInterface[]> {
       const networkInterface: NetworkInterface = {
         name,
         addresses: transformedAddresses,
-        mac: firstAddr?.mac || '',
+        mac: raw?.mac ?? firstAddr?.mac ?? '',
         state: this.normalizeInterfaceState(rawState, firstAddr),
         type: this.inferInterfaceType(name),
         mtu: firstAddr?.mtu || 1500,

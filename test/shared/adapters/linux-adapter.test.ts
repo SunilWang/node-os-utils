@@ -320,11 +320,45 @@ describe('LinuxAdapter 内部解析逻辑', () => {
     expect(interfaces[1].name).to.equal('eth0');
   });
 
-  it('非容器环境应声明支持 system.services', () => {
+  it('只有 systemd 运行且 systemctl 可用时才应声明支持 system.services', () => {
+    const prototype = LinuxAdapter.prototype as any;
+    const originalContainerDetection = prototype.detectContainerEnvironment;
+    const originalSystemdDetection = prototype.isSystemdServiceManagerAvailable;
+
+    prototype.detectContainerEnvironment = () => false;
+    prototype.isSystemdServiceManagerAvailable = () => true;
+
+    try {
+      const adapter = new LinuxAdapter();
+      expect(adapter.getSupportedFeatures().system.services).to.be.true;
+    } finally {
+      prototype.detectContainerEnvironment = originalContainerDetection;
+      prototype.isSystemdServiceManagerAvailable = originalSystemdDetection;
+    }
+  });
+
+  it('systemd 不可用时应拒绝查询服务且不执行 systemctl', async () => {
     const adapter = new LinuxAdapter();
     const internal = adapter as any;
+    let commandCallCount = 0;
 
-    expect(internal.initializeSupportedFeatures().system.services).to.be.true;
+    internal.containerMode = false;
+    internal.supportedFeatures.system.services = false;
+    internal.isSystemdServiceManagerAvailable = () => false;
+    internal.executeCommand = async () => {
+      commandCallCount += 1;
+      throw new Error('systemd 不可用时不应执行 systemctl');
+    };
+
+    try {
+      await adapter.getSystemServices();
+      expect.fail('应抛出不支持错误');
+    } catch (error: any) {
+      expect(error).to.be.instanceOf(MonitorError);
+      expect(error.code).to.equal(ErrorCode.PLATFORM_NOT_SUPPORTED);
+    }
+
+    expect(commandCallCount).to.equal(0);
   });
 
   // ——— #37 修复：df 遇到无权限挂载点时不应整体失败 ———
