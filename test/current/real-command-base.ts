@@ -31,14 +31,17 @@ export class RealCommandTestBase {
       darwin: 'sysctl -n hw.logicalcpu',
       win32: 'powershell -NoProfile -Command "Get-CimInstance Win32_OperatingSystem | Out-Null"'
     }
-    const command = commandByPlatform?.[this.platform()] || defaultCommands[this.platform()]
+    const platform = this.platform()
+    const command = commandByPlatform?.[platform] || defaultCommands[platform]
     if (!command) {
       context.skip()
       return
     }
 
     try {
-      await new CommandExecutor(this.platform()).execute(command, { timeout: 5000 })
+      // Windows Runner 上 PowerShell/CIM 冷启动存在抖动，需与真实监控测试的 15 秒预算保持一致。
+      const timeout = platform === 'win32' ? 15000 : 5000
+      await new CommandExecutor(platform).execute(command, { timeout })
     } catch (error) {
       this.skipForEnvironmentalError(context, error)
     }
