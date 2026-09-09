@@ -12,6 +12,7 @@ import {
 } from '../shared/utils/test-base'
 import { OSUtils } from '../../src'
 import { ErrorCode } from '../../src/types/errors'
+import { RealCommandTestBase } from '../current/real-command-base'
 
 // 只在Windows系统上运行这些测试
 describe('Windows System Tests', function() {
@@ -71,7 +72,7 @@ describe('Windows System Tests', function() {
         const result = await osu.cpu.usage()
 
         if (!result.success) {
-          this.skip()
+          RealCommandTestBase.skipForEnvironmentalError(this, result.error)
         }
 
         if (result.success) {
@@ -85,7 +86,7 @@ describe('Windows System Tests', function() {
         const result = await osu.cpu.usage()
 
         if (!result.success) {
-          this.skip()
+          RealCommandTestBase.skipForEnvironmentalError(this, result.error)
         }
 
         if (result.success) {
@@ -117,7 +118,7 @@ describe('Windows System Tests', function() {
         const totalMem = os.totalmem()
 
         if (!memResult.success) {
-          this.skip()
+          RealCommandTestBase.skipForEnvironmentalError(this, memResult.error)
         }
 
         const tolerance = 0.1 // 允许10%的误差
@@ -135,7 +136,7 @@ describe('Windows System Tests', function() {
         const result = await osu.memory.usage()
 
         if (!result.success) {
-          this.skip()
+          RealCommandTestBase.skipForEnvironmentalError(this, result.error)
         }
 
         if (result.success) {
@@ -184,7 +185,7 @@ describe('Windows System Tests', function() {
         const result = await osu.disk.info()
 
         if (!result.success) {
-          this.skip()
+          RealCommandTestBase.skipForEnvironmentalError(this, result.error)
         }
 
         if (result.success) {
@@ -201,7 +202,7 @@ describe('Windows System Tests', function() {
         const result = await osu.disk.overallUsage()
 
         if (!result.success) {
-          this.skip()
+          RealCommandTestBase.skipForEnvironmentalError(this, result.error)
         }
 
         if (result.success) {
@@ -234,7 +235,9 @@ describe('Windows System Tests', function() {
       it('网络统计应该包含Windows典型接口类型', asyncTest(async function() {
         const result = await osu.network.interfaces()
 
-        if (!result.success || result.data.length === 0) {
+        if (!result.success) {
+          RealCommandTestBase.skipForEnvironmentalError(this, result.error)
+        } else if (result.data.length === 0) {
           this.skip()
         }
 
@@ -250,7 +253,7 @@ describe('Windows System Tests', function() {
         const result = await osu.network.overview()
 
         if (!result.success) {
-          this.skip()
+          RealCommandTestBase.skipForEnvironmentalError(this, result.error)
         }
 
         if (result.success) {
@@ -264,7 +267,7 @@ describe('Windows System Tests', function() {
         const result = await osu.network.overview()
 
         if (!result.success) {
-          this.skip()
+          RealCommandTestBase.skipForEnvironmentalError(this, result.error)
         }
 
         if (result.success) {
@@ -297,42 +300,29 @@ describe('Windows System Tests', function() {
     }))
   })
 
-  describe('Windows Performance Tests', function() {
-    it('Windows系统调用性能测试', longTest(async function() {
-      const monitor = new PerformanceMonitor()
+  describe('Windows Runtime Contracts', function() {
+    beforeEach(function() {
+      // 每个契约都重新采集，避免连续样本实际反复验证同一条缓存。
+      osu.clearCache()
+    })
 
-      await monitor.time('cpu-info', () => osu.cpu.info())
-      await monitor.time('memory-info', () => osu.memory.info())
-      await monitor.time('disk-info', () => osu.disk.info())
+    for (const monitorName of ['cpu', 'memory', 'disk'] as const) {
+      it(`Windows ${monitorName} 调用应成功并记录有限耗时`, asyncTest(async function() {
+        const monitor = new PerformanceMonitor()
+        const result = await monitor.time('info', async () => await osu[monitorName].info())
+        RealCommandTestBase.unwrap(result, `${monitorName}.info`)
+        // 共享 Runner 的调度耗时不属于 API 性能保证，由调用和 Mocha 预算约束总耗时。
+        RealCommandTestBase.assertNonNegative(monitor.getReport().info, `${monitorName}.executionTime`)
+      }))
+    }
 
-      const report = monitor.getReport()
-
-      // Windows 系统调用可能比Unix系统慢一些
-      expect(report['cpu-info']).to.be.below(2000, 'CPU info should complete within 2s on Windows')
-      expect(report['memory-info']).to.be.below(2000, 'Memory info should complete within 2s on Windows')
-      expect(report['disk-info']).to.be.below(3000, 'Disk info should complete within 3s on Windows')
-    }))
-
-    it('Windows系统资源监控稳定性', longTest(async function() {
-      const iterations = 5
-      const results: number[] = []
-
-      for (let i = 0; i < iterations; i++) {
+    for (let sample = 1; sample <= 5; sample++) {
+      it(`Windows CPU 第 ${sample} 次采样应返回有效使用率`, longTest(async function() {
         const result = await osu.cpu.usage()
-        if (result.success) {
-          results.push(result.data)
-        }
-      }
-
-      if (results.length > 0) {
-        // 检查结果的一致性
-        const avg = results.reduce((sum, val) => sum + val, 0) / results.length
-        const variance = results.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) / results.length
-
-        // 方差不应该太大（表示结果相对稳定）
-        expect(variance).to.be.below(100)
-      }
-    }))
+        // 真实 CPU 负载可以突变，但每次采样都必须成功且符合百分比契约。
+        RealCommandTestBase.assertPercentage(RealCommandTestBase.unwrap(result, 'cpu.usage'), 'cpu.usage')
+      }))
+    }
   })
 
   describe('Windows Error Handling', function() {
@@ -366,7 +356,7 @@ describe('Windows System Tests', function() {
       const result = await osu.system.info()
 
       if (!result.success) {
-        expect(result.error).to.exist
+        RealCommandTestBase.skipForEnvironmentalError(this, result.error)
       } else if (result.success) {
         expect(result.data).to.exist
       }

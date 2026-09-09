@@ -178,10 +178,12 @@ export class OSUtils {
   }
 
   /**
-   * 检查平台能力
+   * 使用当前实例的适配器及命令超时配置检查平台能力。
+   *
+   * @returns 已确认能力和探测问题；平台不支持、初始化或功能枚举失败时 supported 为 false
    */
   async checkPlatformCapabilities() {
-    return AdapterFactory.checkPlatformCapabilities(this.adapter.getPlatform());
+    return AdapterFactory.checkPlatformCapabilities(this.adapter);
   }
 
   /**

@@ -1,6 +1,6 @@
 import { PlatformAdapter, CommandResult, SupportedFeatures } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
-import { MonitorError } from '../types/errors';
+import { MonitorError, ErrorCode } from '../types/errors';
 import { CommandExecutor } from '../utils/command-executor';
 
 /**
@@ -243,9 +243,16 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
   }
 
   /**
-   * 创建命令执行失败错误
+   * 创建命令执行失败错误，保留已有超时错误的类型与诊断。
+   *
+   * @param {string} command 失败的命令或适配器操作名称
+   * @param {any} [details] 原始错误或补充诊断
+   * @returns {MonitorError} 原始超时错误，或包装后的命令执行失败错误
    */
   protected createCommandError(command: string, details?: any): MonitorError {
+    if (details instanceof MonitorError && details.code === ErrorCode.TIMEOUT) {
+      return details;
+    }
     return MonitorError.createCommandFailed(this.platformName, command, details);
   }
 

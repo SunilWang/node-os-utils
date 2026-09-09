@@ -4,6 +4,76 @@ import { LinuxAdapter } from '../../../src/adapters/linux-adapter';
 import { MonitorError, ErrorCode } from '../../../src/types/errors';
 import os from 'os';
 
+describe('LinuxAdapter 超时传播', () => {
+  it('磁盘查询应保留底层 TIMEOUT 及诊断', async () => {
+    const adapter = new LinuxAdapter();
+    const timeout = new MonitorError('df timeout', ErrorCode.TIMEOUT, 'linux', { command: 'df -Ph' });
+    (adapter as any).executeCommand = async () => { throw timeout; };
+
+    let caught: unknown;
+    try {
+      await adapter.getDiskInfo();
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).to.equal(timeout);
+  });
+
+  const scenarios = [
+    {
+      method: 'getNetworkInterfaces',
+      commands: ['ip addr show', 'ifconfig'],
+      stdout: 'eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>\n    inet 192.168.1.10\n',
+      expected: [{ name: 'eth0', addresses: [{ address: '192.168.1.10', family: 'IPv4' }], state: 'up' }]
+    },
+    {
+      method: 'getNetworkConnections',
+      commands: ['ss -tuln', 'netstat -tuln'],
+      stdout: 'Proto Recv-Q Send-Q Local Address Foreign Address State\ntcp 0 0 127.0.0.1:80 0.0.0.0:* LISTEN\n',
+      expected: [{ protocol: 'tcp', state: 'listen', localAddress: '127.0.0.1:80', foreignAddress: '0.0.0.0:*' }]
+    }
+  ] as const;
+
+  for (const scenario of scenarios) {
+    for (const timeoutOnFallback of [false, true]) {
+      it(`${scenario.method} ${timeoutOnFallback ? '回退命令超时应保留原始错误' : '主命令超时后不应继续回退'}`, async () => {
+        const adapter = new LinuxAdapter();
+        const commands: string[] = [];
+        const timeout = new MonitorError('network command timeout', ErrorCode.TIMEOUT, 'linux');
+        (adapter as any).executeCommand = async (command: string) => {
+          commands.push(command);
+          if (timeoutOnFallback && commands.length === 1) {
+            throw MonitorError.createCommandFailed('linux', command);
+          }
+          throw timeout;
+        };
+
+        let caught: unknown;
+        try {
+          await adapter[scenario.method]();
+        } catch (error) {
+          caught = error;
+        }
+        expect(caught).to.equal(timeout);
+        expect(commands).to.deep.equal(timeoutOnFallback ? scenario.commands : [scenario.commands[0]]);
+      });
+    }
+
+    it(`${scenario.method} 普通失败仍应回退并解析真实格式数据`, async () => {
+      const adapter = new LinuxAdapter();
+      const commands: string[] = [];
+      (adapter as any).executeCommand = async (command: string) => {
+        commands.push(command);
+        if (commands.length === 1) throw MonitorError.createCommandFailed('linux', command);
+        return { command, stdout: scenario.stdout, stderr: '', exitCode: 0, platform: 'linux', executionTime: 1 };
+      };
+
+      expect(await adapter[scenario.method]()).to.deep.equal(scenario.expected);
+      expect(commands).to.deep.equal(scenario.commands);
+    });
+  }
+});
+
 describe('LinuxAdapter 内部解析逻辑', () => {
   it('应基于差分快照计算 CPU 使用率', () => {
     const adapter = new LinuxAdapter();

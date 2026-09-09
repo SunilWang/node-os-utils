@@ -115,6 +115,9 @@ export class MacOSAdapter extends BasePlatformAdapter {
 
   /**
    * 调用 top/iostat 获取 CPU 使用率，失败时链式回退
+   *
+   * @returns {Promise<any>} CPU 使用率信息
+   * @throws {MonitorError} 任一命令超时或主次命令均失败时抛出
    */
   async getCPUUsage(): Promise<any> {
     try {
@@ -123,12 +126,19 @@ export class MacOSAdapter extends BasePlatformAdapter {
       this.validateCommandResult(result, 'top command');
       return this.parseCPUUsageFromTop(result.stdout);
     } catch (error) {
+      // 超时结束本次采集，不再为已经超时的操作启动另一条系统命令。
+      if (error instanceof MonitorError && error.code === ErrorCode.TIMEOUT) {
+        throw error;
+      }
       // 回退到 iostat
       try {
         const result = await this.executeCommand('iostat -c 1');
         this.validateCommandResult(result, 'iostat command');
         return this.parseCPUUsageFromIostat(result.stdout);
-      } catch {
+      } catch (fallbackError) {
+        if (fallbackError instanceof MonitorError && fallbackError.code === ErrorCode.TIMEOUT) {
+          throw fallbackError;
+        }
         throw this.createCommandError('getCPUUsage', error);
       }
     }

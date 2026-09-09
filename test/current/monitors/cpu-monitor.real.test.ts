@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { OSUtils } from '../../../src'
 import { ErrorCode } from '../../../src/types/errors'
 import { RealCommandTestBase as Base } from '../real-command-base'
+import { ensureMinimumTimeout } from '../../shared/utils/test-base'
 
 describe('CPU Monitor 真实运行时契约', function () {
   let utils: OSUtils
@@ -17,6 +18,7 @@ describe('CPU Monitor 真实运行时契约', function () {
   })
 
   it('coreCount 应与 info 返回的核心数一致', async function () {
+    ensureMinimumTimeout(this, 35000)
     const info = Base.unwrap<any>(await utils.cpu.info(), 'cpu.info')
     const cores = Base.unwrap<any>(await utils.cpu.coreCount(), 'cpu.coreCount')
     expect(cores.physical).to.equal(info.cores)
@@ -49,9 +51,12 @@ describe('CPU Monitor 真实运行时契约', function () {
     ;['load1', 'load5', 'load15'].forEach(key => Base.assertNonNegative(load[key], `cpu.${key}`))
   })
 
-  it('frequency 和 cache 应遵循平台能力结果', async function () {
+  it('frequency 应遵循平台能力结果', async function () {
     const frequency = await utils.cpu.frequency()
     expect(frequency.success || (!frequency.success && frequency.error.code === ErrorCode.PLATFORM_NOT_SUPPORTED)).to.equal(true)
+  })
+
+  it('cache 应遵循平台能力结果', async function () {
     const cache = await utils.cpu.getCacheInfo()
     expect(cache.success || (!cache.success && cache.error.code === ErrorCode.PLATFORM_NOT_SUPPORTED)).to.equal(true)
   })

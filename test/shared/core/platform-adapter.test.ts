@@ -2,7 +2,7 @@ import { expect } from 'chai';
 
 import { BasePlatformAdapter } from '../../../src/core/platform-adapter';
 import { SupportedFeatures, CommandResult } from '../../../src/types/platform';
-import { MonitorError } from '../../../src/types/errors';
+import { MonitorError, ErrorCode } from '../../../src/types/errors';
 
 class TestPlatformAdapter extends BasePlatformAdapter {
   constructor() {
@@ -149,6 +149,26 @@ describe('BasePlatformAdapter', () => {
 
     expect(result.exitCode).to.equal(1);
     expect(result.stderr).to.include('failed');
+  });
+
+  it('createCommandError 应原样保留命令超时及诊断', () => {
+    const adapter = new TestPlatformAdapter();
+    const timeout = new MonitorError('command timeout', ErrorCode.TIMEOUT, 'test', {
+      command: 'df -Ph', executionTime: 1001
+    });
+
+    expect((adapter as any).createCommandError('getDiskInfo', timeout)).to.equal(timeout);
+  });
+
+  it('createCommandError 应继续包装非超时错误', () => {
+    const adapter = new TestPlatformAdapter();
+    const failure = new MonitorError('permission denied', ErrorCode.PERMISSION_DENIED, 'test');
+    const error = (adapter as any).createCommandError('getDiskInfo', failure);
+
+    expect(error).to.not.equal(failure);
+    expect(error.code).to.equal(ErrorCode.COMMAND_FAILED);
+    expect(error.details.command).to.equal('getDiskInfo');
+    expect(error.details.code).to.equal(ErrorCode.PERMISSION_DENIED);
   });
 
   it('validateCommandResult 遇到非零退出码会抛出错误', () => {

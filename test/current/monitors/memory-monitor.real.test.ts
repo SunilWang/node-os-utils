@@ -3,6 +3,7 @@ import * as os from 'os'
 import { OSUtils } from '../../../src'
 import { ErrorCode } from '../../../src/types/errors'
 import { RealCommandTestBase as Base } from '../real-command-base'
+import { ensureMinimumTimeout } from '../../shared/utils/test-base'
 
 describe('Memory Monitor 真实运行时契约', function () {
   let utils: OSUtils
@@ -32,19 +33,27 @@ describe('Memory Monitor 真实运行时契约', function () {
   })
 
   it('usage 应与 info 的使用率一致', async function () {
+    ensureMinimumTimeout(this, 35000)
     const info = Base.unwrap<any>(await utils.memory.info(), 'memory.info')
     const usage = Base.unwrap<number>(await utils.memory.usage(), 'memory.usage')
     // 两次真实采样之间系统内存会变化，保留 1 个百分点容差而非要求瞬时完全相等。
     expect(usage).to.be.closeTo(info.usagePercentage, 1)
   })
 
-  it('available、usedAsync 和 total 应返回 DataSize', async function () {
-    const info = Base.unwrap<any>(await utils.memory.info(), 'memory.info')
+  it('available 应返回有效 DataSize', async function () {
     const available = Base.unwrap<any>(await utils.memory.available(), 'memory.available')
-    const used = Base.unwrap<any>(await utils.memory.usedAsync(), 'memory.usedAsync')
-    expect(Base.unwrap<any>(await utils.memory.total(), 'memory.total').toBytes()).to.equal(info.total.toBytes())
     Base.assertNonNegative(available.toBytes(), 'memory.available')
+  })
+
+  it('usedAsync 应返回有效 DataSize', async function () {
+    const used = Base.unwrap<any>(await utils.memory.usedAsync(), 'memory.usedAsync')
     Base.assertNonNegative(used.toBytes(), 'memory.used')
+  })
+
+  it('total 应与 info 返回的内存总量一致', async function () {
+    ensureMinimumTimeout(this, 35000)
+    const info = Base.unwrap<any>(await utils.memory.info(), 'memory.info')
+    expect(Base.unwrap<any>(await utils.memory.total(), 'memory.total').toBytes()).to.equal(info.total.toBytes())
   })
 
   it('swap 应返回非负的交换空间字段或明确不支持', async function () {
@@ -57,10 +66,13 @@ describe('Memory Monitor 真实运行时契约', function () {
     ;['total', 'used', 'free'].forEach(key => Base.assertNonNegative(swap[key].toBytes(), `memory.swap.${key}`))
   })
 
-  it('buffers 和 summary 应返回可用聚合数据', async function () {
+  it('buffers 应返回有效内存分量', async function () {
     const buffers = Base.unwrap<any>(await utils.memory.buffers(), 'memory.buffers')
     Base.assertNonNegative(buffers.cached.toBytes(), 'memory.cached')
     Base.assertNonNegative(buffers.buffers.toBytes(), 'memory.buffers')
+  })
+
+  it('summary 应返回可用聚合数据', async function () {
     const summary = Base.unwrap<any>(await utils.memory.summary(), 'memory.summary')
     expect(summary.total).to.be.a('string').and.not.empty
     Base.assertPercentage(summary.usagePercentage, 'memory.summary.usagePercentage')

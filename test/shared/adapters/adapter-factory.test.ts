@@ -3,6 +3,7 @@ import { expect } from 'chai';
 import { AdapterFactory } from '../../../src/adapters/adapter-factory';
 import { MonitorError, ErrorCode } from '../../../src/types/errors';
 import { PlatformAdapter, SupportedFeatures } from '../../../src/types/platform';
+import { ExecuteOptions } from '../../../src/types/config';
 
 function createStubSupportedFeatures(): SupportedFeatures {
   return {
@@ -108,7 +109,10 @@ function createStubAdapter(): PlatformAdapter {
 }
 
 describe('AdapterFactory', () => {
+  const originalCreate = AdapterFactory.create;
+
   afterEach(() => {
+    AdapterFactory.create = originalCreate;
     AdapterFactory.clearCache();
   });
 
@@ -192,6 +196,146 @@ describe('AdapterFactory', () => {
 
     expect(result.supported).to.be.false;
     expect(result.issues[0]).to.include('not supported');
+  });
+
+  for (const timeout of [10000, 60000]) {
+    it(`checkPlatformCapabilities 应继承适配器的 ${timeout}ms 默认命令预算`, async () => {
+      const adapter = originalCreate.call(AdapterFactory, 'darwin', { timeout });
+      const observedTimeouts: number[] = [];
+      const executor = (adapter as any).executor;
+      executor.executeWithTimeout = async (_command: string, options: ExecuteOptions) => {
+        observedTimeouts.push(options.timeout!);
+        return { stdout: '/usr/bin/test', stderr: '' };
+      };
+      adapter.fileExists = async () => true;
+      AdapterFactory.create = () => adapter;
+
+      const result = await AdapterFactory.checkPlatformCapabilities('darwin');
+
+      expect(result.capabilities.commands).to.include('ps');
+      expect(observedTimeouts).to.have.length(8);
+      expect(observedTimeouts.every(value => value === timeout)).to.equal(true);
+    });
+  }
+
+  it('命令定位返回非零退出码和 stdout 时不应标记为可用', async () => {
+    const adapter = createStubAdapter();
+    const executeCommand = adapter.executeCommand;
+    adapter.executeCommand = async (command: string) => ({
+      ...await executeCommand(command),
+      exitCode: 1
+    });
+    AdapterFactory.create = () => adapter;
+
+    const result = await AdapterFactory.checkPlatformCapabilities('linux');
+
+    expect(result.supported).to.equal(true);
+    expect(result.capabilities.commands).to.deep.equal([]);
+    expect(result.issues).to.deep.equal([]);
+  });
+
+  it('命令定位成功但没有路径输出时不应标记为可用', async () => {
+    const adapter = createStubAdapter();
+    const executeCommand = adapter.executeCommand;
+    adapter.executeCommand = async (command: string) => ({
+      ...await executeCommand(command),
+      stdout: '  '
+    });
+    AdapterFactory.create = () => adapter;
+
+    const result = await AdapterFactory.checkPlatformCapabilities('linux');
+
+    expect(result.capabilities.commands).to.deep.equal([]);
+    expect(result.issues).to.have.length(9);
+    expect(result.issues[0]).to.include('ps');
+  });
+
+  it('探测超时应报告 TIMEOUT 并保留平台支持状态及已成功的能力', async () => {
+    const adapter = createStubAdapter();
+    const executeCommand = adapter.executeCommand;
+    adapter.executeCommand = async (command: string) => {
+      if (command === 'which top') {
+        throw new MonitorError('探测超时', ErrorCode.TIMEOUT, 'linux');
+      }
+      return executeCommand(command);
+    };
+    AdapterFactory.create = () => adapter;
+
+    const result = await AdapterFactory.checkPlatformCapabilities('linux');
+
+    expect(result.supported).to.equal(true);
+    expect(result.capabilities.commands).to.include('ps').and.include('df').and.not.include('top');
+    expect(result.capabilities.files).to.include('/proc/cpuinfo');
+    expect(result.capabilities.features).to.include('cpu.info');
+    expect(result.issues).to.have.length(1);
+    expect(result.issues[0]).to.include('top').and.include('TIMEOUT').and.include('探测超时');
+  });
+
+  it('命令定位器异常退出应报告失败，而目标命令不存在仍按缺失能力处理', async () => {
+    const adapter = createStubAdapter();
+    const executeCommand = adapter.executeCommand;
+    adapter.executeCommand = async (command: string) => {
+      if (command === 'which ps') {
+        throw MonitorError.createCommandFailed('linux', command, { exitCode: 1 });
+      }
+      if (command === 'which top') {
+        return { ...await executeCommand(command), exitCode: 2, stderr: '定位器异常' };
+      }
+      if (command === 'which df') {
+        throw MonitorError.createCommandFailed('linux', command, { code: 'ENOENT' });
+      }
+      return executeCommand(command);
+    };
+    AdapterFactory.create = () => adapter;
+
+    const result = await AdapterFactory.checkPlatformCapabilities('linux');
+
+    expect(result.capabilities.commands).to.not.include('ps').and.not.include('top').and.not.include('df');
+    expect(result.capabilities.commands).to.include('free');
+    expect(result.issues).to.have.length(2);
+    expect(result.issues[0]).to.include('top').and.include('2');
+    expect(result.issues[1]).to.include('df').and.include('COMMAND_FAILED');
+  });
+
+  it('功能枚举失败应沿用 supported 为 false 的契约并保留已成功的命令与文件', async () => {
+    const adapter = createStubAdapter();
+    adapter.fileExists = async (file: string) => {
+      if (file === '/proc/meminfo') {
+        throw new MonitorError('文件访问被拒绝', ErrorCode.PERMISSION_DENIED, 'linux');
+      }
+      if (file === '/proc/stat') {
+        throw new MonitorError('文件不存在', ErrorCode.FILE_NOT_FOUND, 'linux');
+      }
+      return true;
+    };
+    adapter.getSupportedFeatures = () => {
+      throw new Error('无法读取功能支持信息');
+    };
+    AdapterFactory.create = () => adapter;
+
+    const result = await AdapterFactory.checkPlatformCapabilities('linux');
+
+    expect(result.supported).to.equal(false);
+    expect(result.capabilities.commands).to.include('ps');
+    expect(result.capabilities.files).to.include('/proc/cpuinfo').and.include('/proc/uptime');
+    expect(result.capabilities.files).to.not.include('/proc/meminfo').and.not.include('/proc/stat');
+    expect(result.capabilities.features).to.deep.equal([]);
+    expect(result.issues).to.have.length(2);
+    expect(result.issues[0]).to.include('/proc/meminfo').and.include('PERMISSION_DENIED');
+    expect(result.issues[1]).to.include('无法读取功能支持信息');
+  });
+
+  it('适配器初始化失败应沿用 supported 为 false 的契约并报告错误', async () => {
+    AdapterFactory.create = () => {
+      throw new MonitorError('初始化超时', ErrorCode.TIMEOUT, 'linux');
+    };
+
+    const result = await AdapterFactory.checkPlatformCapabilities('linux');
+
+    expect(result.supported).to.equal(false);
+    expect(result.capabilities.commands).to.deep.equal([]);
+    expect(result.issues).to.have.length(1);
+    expect(result.issues[0]).to.include('TIMEOUT').and.include('初始化超时');
   });
 
   it('getPlatformDisplayName 返回友好名称', () => {

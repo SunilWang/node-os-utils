@@ -1,10 +1,7 @@
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import { CommandResult } from '../types/platform';
 import { ExecuteOptions } from '../types/config';
 import { MonitorError, ErrorCode } from '../types/errors';
-
-const execAsync = promisify(exec);
 
 /**
  * 不经 shell 执行的流式命令。
@@ -82,7 +79,7 @@ export class CommandExecutor {
       }
 
       // 处理不同类型的错误
-      // maxBuffer 溢出：exec 会杀死子进程并附带 maxBuffer 相关错误，需优先识别，不能误分类为超时
+      // 输出溢出同样需要清理进程树，但不能因此误分类为超时。
       if (
         error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ||
         (typeof error.message === 'string' && error.message.includes('maxBuffer'))
@@ -109,6 +106,8 @@ export class CommandExecutor {
             command,
             signal: error.signal,
             killed: error.killed,
+            stdout: error.stdout || '',
+            stderr: error.stderr || '',
             executionTime
           }
         );
@@ -201,13 +200,24 @@ export class CommandExecutor {
     // 进程终止方式取决于实际宿主系统；platform 仅用于标识适配器和错误来源。
     if (process.platform === 'win32') {
       if (pid !== undefined) {
+        let directChildKilled = false;
+        /**
+         * taskkill 不可用时至少终止直接子进程，避免连 shell 都继续运行。
+         * @returns {void} 进程已经退出或无权终止时忽略清理错误
+         */
+        const killChild = (): void => {
+          if (directChildKilled) return;
+          directChildKilled = true;
+          try { child.kill('SIGTERM'); } catch { /* 进程已退出或无法终止 */ }
+        };
         try {
           const taskkill = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
           // spawn 启动失败通过异步 error 事件上报，必须主动消费，避免清理失败导致宿主进程崩溃。
-          taskkill.once('error', () => undefined);
+          taskkill.once('error', killChild);
+          taskkill.once('exit', code => { if (code !== 0) killChild(); });
           taskkill.unref();
         } catch {
-          // 进程已退出时忽略错误
+          killChild();
         }
       }
       return;
@@ -218,24 +228,21 @@ export class CommandExecutor {
     }
 
     try {
-      // executeStream 在 POSIX 上将 shell 放入独立进程组，负 PID 可同时终止
+      // 普通和流式执行在 POSIX 上均将 shell 放入独立进程组，负 PID 可同时终止
       // shell、管道进程及其后代，避免只杀 shell 后留下孤儿进程。
       process.kill(-pid, 'SIGTERM');
     } catch {
       // 进程已退出时忽略错误
     }
 
-    // 1 秒后仍未退出则 SIGKILL 兜底；unref 避免该定时器阻止进程退出
-    const forceKillTimer = setTimeout(() => {
+    // 保持定时器存活直到完成兜底；调用方立即退出时也不能遗留忽略 SIGTERM 的后代。
+    setTimeout(() => {
       try {
         process.kill(-pid, 'SIGKILL');
       } catch {
         // 进程已退出时忽略错误
       }
     }, 1000);
-    if (typeof forceKillTimer.unref === 'function') {
-      forceKillTimer.unref();
-    }
   }
 
   /**
@@ -463,10 +470,11 @@ export class CommandExecutor {
   }
 
   /**
-   * 检查命令是否可用。
+   * 使用执行器配置的超时检查命令是否可用。
    *
-   * @param command 待检查的可执行文件名
-   * @returns 定位命令以零退出码结束时返回 true，否则返回 false
+   * @param {string} command 待检查的可执行文件名
+   * @returns {Promise<boolean>} 定位命令以零退出码结束时返回 true，其他非超时失败返回 false
+   * @throws {MonitorError} 命令名非法时抛出 INVALID_CONFIG，探测超时时保留 TIMEOUT
    */
   async isCommandAvailable(command: string): Promise<boolean> {
     this.assertValidCommandName(command);
@@ -476,24 +484,32 @@ export class CommandExecutor {
       : `which ${command}`;
 
     try {
-      const result = await this.execute(testCommand, { timeout: 5000 });
+      const result = await this.execute(testCommand);
       // execute 会为“非零退出但有 stdout”的通用解析场景保留结果；命令定位必须额外核对退出码。
       return result.exitCode === 0;
-    } catch {
+    } catch (error) {
+      // 定位超时无法证明命令不存在，保留原始诊断供调用方区分这两种情况。
+      if (error instanceof MonitorError && error.code === ErrorCode.TIMEOUT) throw error;
       return false;
     }
   }
 
   /**
-   * 获取命令的版本信息
+   * 使用执行器配置的超时获取命令版本信息。
+   *
+   * @param {string} command 待查询的可执行文件名
+   * @param {string} versionFlag 版本查询参数，默认为 --version
+   * @returns {Promise<string>} 去除首尾空白的版本输出
+   * @throws {MonitorError} 命令名非法、查询超时或命令执行失败时抛出对应错误
    */
   async getCommandVersion(command: string, versionFlag: string = '--version'): Promise<string> {
     this.assertValidCommandName(command);
 
     try {
-      const result = await this.execute(`${command} ${versionFlag}`, { timeout: 5000 });
+      const result = await this.execute(`${command} ${versionFlag}`);
       return result.stdout.trim();
     } catch (error) {
+      if (error instanceof MonitorError && error.code === ErrorCode.TIMEOUT) throw error;
       throw new MonitorError(
         `Failed to get version for command: ${command}`,
         ErrorCode.COMMAND_FAILED,
@@ -558,28 +574,101 @@ export class CommandExecutor {
   }
 
   /**
-   * 使用 child_process.exec 的原生超时能力执行命令。
+   * 缓冲命令输出，并在超时或输出溢出时清理整棵进程树。
    *
-   * @param command 待执行的命令字符串
-   * @param options 命令执行选项，其中 timeout 控制超时时间
-   * @returns 命令的标准输出与标准错误
-   * @throws 命令失败、输出溢出或超时时抛出 child_process 原始错误
+   * @param {string} command 待执行的命令字符串
+   * @param {ExecuteOptions} options 超时、编码、输出限制及环境配置
+   * @returns {Promise<{ stdout: string; stderr: string }>} 解码后的标准输出与标准错误
+   * @throws {Error} 启动失败、非零退出、输出溢出或超时，由 execute 统一分类
    */
-  private async executeWithTimeout(command: string, options: ExecuteOptions): Promise<any> {
-    const execOptions: any = { ...options };
-
-    // 确保 shell 选项在不同平台下正确设置
-    if (execOptions.shell === true) {
-      if (process.platform === 'win32') {
-        execOptions.shell = process.env.ComSpec || 'cmd.exe';
-      } else {
-        // 尝试使用当前 SHELL，若不存在再回退到常见 POSIX shell
-        const fallbackShells = [process.env.SHELL, '/bin/bash', '/bin/sh'];
-        execOptions.shell = fallbackShells.find(Boolean);
-      }
+  private async executeWithTimeout(command: string, options: ExecuteOptions): Promise<{ stdout: string; stderr: string }> {
+    const timeout = options.timeout ?? 0;
+    const maxBuffer = options.maxBuffer ?? 1024 * 1024;
+    const encoding = options.encoding ?? 'utf8';
+    if (!Number.isInteger(timeout) || timeout < 0) {
+      throw new RangeError('timeout must be a non-negative integer');
+    }
+    if (!(maxBuffer >= 0)) {
+      throw new RangeError('maxBuffer must be non-negative');
+    }
+    if (!Buffer.isEncoding(encoding)) {
+      throw new TypeError(`Unknown encoding: ${encoding}`);
     }
 
-    // exec 自 Node.js 早期版本即原生支持 timeout，无需依赖较新的 AbortController。
-    return execAsync(command, execOptions);
+    // 保持原 exec 的字符串命令语义：shell:false 仍使用宿主默认 shell；
+    // shell:true 沿用显式 SHELL/ComSpec 选择。不依赖 Node.js 12 缺少的 AbortController。
+    const shell = options.shell === true
+      ? process.platform === 'win32'
+        ? process.env.ComSpec || 'cmd.exe'
+        : process.env.SHELL || '/bin/bash'
+      : true;
+
+    return new Promise((resolve, reject) => {
+      const child = spawn(command, {
+        shell,
+        cwd: options.cwd,
+        env: options.env,
+        // exec 不会将 detached 传给内部 spawn，因此直接创建独立进程组。
+        detached: process.platform !== 'win32'
+      });
+      const chunks: { stdout: Buffer[]; stderr: Buffer[] } = { stdout: [], stderr: [] };
+      const lengths = { stdout: 0, stderr: 0 };
+      let settled = false;
+      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+
+      /**
+       * 完成本次执行；强制结束时先清理进程树，再释放管道与等待句柄。
+       * @param {Error} error 启动、退出或预算错误；省略表示正常结束
+       * @param {boolean} terminate 是否主动终止进程树
+       * @returns {void} Promise 仅完成一次
+       */
+      const finish = (error?: Error, terminate = false): void => {
+        if (settled) return;
+        settled = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (terminate) {
+          this.terminateProcessTree(child);
+          child.stdin?.destroy();
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          // 超时不能依赖 Windows shell 的 close 事件，也不能继续阻止宿主退出。
+          child.unref();
+        }
+        // 按原始字节计量、合并后解码，避免多字节字符在 data 分块边界被破坏。
+        const output = {
+          stdout: Buffer.concat(chunks.stdout, lengths.stdout).toString(encoding),
+          stderr: Buffer.concat(chunks.stderr, lengths.stderr).toString(encoding)
+        };
+        if (error) reject(Object.assign(error, output));
+        else resolve(output);
+      };
+
+      for (const stream of ['stdout', 'stderr'] as const) {
+        child[stream]?.on('data', (data: Buffer) => {
+          if (settled) return;
+          const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+          if (lengths[stream] + buffer.length > maxBuffer) {
+            finish(Object.assign(new Error(`${stream} maxBuffer length exceeded`), {
+              code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+            }), true);
+            return;
+          }
+          chunks[stream].push(buffer);
+          lengths[stream] += buffer.length;
+        });
+      }
+
+      child.on('error', error => finish(error));
+      child.on('close', (code, signal) => {
+        if (code === 0 && signal === null) finish();
+        else finish(Object.assign(new Error(`Command failed: ${command}`), { code, signal }));
+      });
+      if (timeout > 0) {
+        timeoutTimer = setTimeout(() => finish(Object.assign(new Error(`Command timed out after ${timeout}ms`), {
+          killed: true,
+          signal: 'SIGTERM'
+        }), true), timeout);
+      }
+    });
   }
 }

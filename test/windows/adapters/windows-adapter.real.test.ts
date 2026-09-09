@@ -1,29 +1,10 @@
-import { execFile, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import os from 'os';
-import { promisify } from 'util';
 import { expect } from 'chai';
 import { WindowsAdapter } from '../../../src/adapters/windows-adapter';
 import { ErrorCode, MonitorError } from '../../../src/types/errors';
-
-const execFileAsync = promisify(execFile);
-
-/**
- * 直接通过 PowerShell 查询系统，作为 Adapter 输出的独立交叉校验来源。
- *
- * @param script PowerShell 管道前的查询脚本
- * @returns ConvertTo-Json 反序列化后的值
- */
-async function queryPowerShell<T>(script: string): Promise<T> {
-  const command = `[Console]::OutputEncoding=[Text.Encoding]::UTF8; ${script} | ConvertTo-Json -Depth 4 -Compress`;
-  const { stdout } = await execFileAsync(
-    'powershell',
-    ['-NoProfile', '-NonInteractive', '-Command', command],
-    { windowsHide: true, maxBuffer: 10 * 1024 * 1024 }
-  );
-  const output = String(stdout).replace(/^\uFEFF/, '').trim();
-  return JSON.parse(output) as T;
-}
+import { probePowerShell, queryPowerShell } from '../../shared/utils/windows-powershell';
 
 /** 将 PowerShell 的单对象或数组结果统一为数组。 */
 function asArray<T>(value: T | T[] | null): T[] {
@@ -52,13 +33,8 @@ describe('WindowsAdapter 真实系统命令', function () {
   before(async function () {
     if (process.platform !== 'win32') this.skip();
 
-    try {
-      await queryPowerShell('Get-CimInstance Win32_OperatingSystem | Select-Object -First 1 Caption');
-      powerShellAvailable = true;
-    } catch {
-      // 后续测试会分别验证可降级 API 的 Node.js 回退和必须依赖 PowerShell 的能力契约。
-      powerShellAvailable = false;
-    }
+    // 明确的环境限制只影响依赖 PowerShell 的用例，其他 API 仍继续验证。
+    powerShellAvailable = await probePowerShell(this);
   });
 
   /** PowerShell 命令可用时才执行真实命令交叉校验。 */

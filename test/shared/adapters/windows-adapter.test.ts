@@ -301,6 +301,43 @@ describe('WindowsAdapter — Deno 兼容性降级', () => {
   });
 });
 
+describe('WindowsAdapter 超时传播', () => {
+  for (const method of ['getDefaultGateway', 'getSystemServices'] as const) {
+    it(`${method} 超时应原样抛出，不能转换为空值或平台不支持`, async () => {
+      const adapter = new WindowsAdapter();
+      const timeout = new MonitorError('PowerShell timeout', ErrorCode.TIMEOUT, 'win32', {
+        command: method, executionTime: 1001
+      });
+      (adapter as any).executePowerShell = async () => { throw timeout; };
+
+      let caught: unknown;
+      try {
+        await adapter[method]();
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).to.equal(timeout);
+    });
+  }
+
+  it('非超时失败仍应保留网关和服务的既有降级行为', async () => {
+    const adapter = new WindowsAdapter();
+    (adapter as any).executePowerShell = async () => {
+      throw new MonitorError('PowerShell unavailable', ErrorCode.COMMAND_FAILED, 'win32');
+    };
+
+    expect(await adapter.getDefaultGateway()).to.equal(null);
+    let caught: unknown;
+    try {
+      await adapter.getSystemServices();
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).to.be.instanceOf(MonitorError);
+    expect((caught as MonitorError).code).to.equal(ErrorCode.PLATFORM_NOT_SUPPORTED);
+  });
+});
+
 describe('WindowsAdapter — Deno 兼容性降级 (T021: US2)', () => {
   let adapter: WindowsAdapter;
   let internal: any;

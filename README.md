@@ -40,7 +40,9 @@
 
 ### 🧱 Architecture at a Glance
 - **AdapterFactory** centralises platform detection, caching instantiated adapters and exposing helper utilities such as `getSupportedPlatforms()` and `checkPlatformCapabilities()`.
-- **CommandExecutor** normalises shell execution across operating systems with smart fallbacks (`/bin/bash` → `/bin/sh`, PowerShell auto discovery) and uniform error objects.
+- **CommandExecutor** normalises shell execution across operating systems with configurable timeouts and uniform error objects.
+
+  Command availability checks and version queries use the executor's configured timeout. Both propagate `TIMEOUT` errors; a timed-out availability check does not return `false`. Buffered execution attempts to terminate the process tree on timeout or output overflow, preserving encoding and separate stdout/stderr byte limits.
 - **Platform Adapters** encapsulate OS-specific logic (Linux via `/proc`, macOS via `sysctl`/`powermetrics`, Windows via PowerShell + WMI) while reporting declared feature support.
 - **CacheManager** provides adaptive TTL-based caching with LRU eviction to minimise expensive system calls during polling-heavy workloads.
 
@@ -74,10 +76,12 @@ console.table({
   features: report.capabilities.features.join(',')
 });
 
-if (!report.supported) {
-  console.warn('❗ Some metrics are unavailable:', report.issues);
+if (report.issues.length > 0) {
+  console.warn('❗ Capability diagnostics:', report.issues);
 }
 ```
+
+`OSUtils.checkPlatformCapabilities()` reuses the instance's adapter and command timeout. `supported` remains `false` for unsupported platforms, adapter initialization failures, or feature enumeration failures. Individual command/file probe failures, including `TIMEOUT`, appear in `issues` alongside any successfully detected capabilities. The static `AdapterFactory.checkPlatformCapabilities(platformOrAdapter?)` accepts either a platform name or an existing adapter to reuse its configuration; existing calls with a platform name remain valid.
 
 `AdapterFactory.getDebugInfo()` is also available when you need to inspect feature flags or confirm that platform-specific commands can be executed.
 
@@ -266,6 +270,7 @@ enum ErrorCode {
 - **Windows network & process metrics** call PowerShell CIM cmdlets (`Get-NetAdapterStatistics`, `Get-CimInstance`). Run the host app in an elevated PowerShell session if you encounter `PERMISSION_DENIED` or `COMMAND_FAILED` errors.
 - **Linux command fallbacks**: metrics primarily read `/proc`. If utilities such as `ip`/`ss` are missing, the adapter retries with `ifconfig`/`netstat`, but you can confirm availability up front via `osutils.checkPlatformCapabilities()`.
 - Always inspect `MonitorResult.error.code` for structured error feedback (timeout, permission, unsupported) and provide user guidance accordingly.
+- Command timeouts retain `TIMEOUT` through adapter error handling. macOS CPU and Linux network queries stop on timeout instead of starting a fallback command; Windows gateway and service queries report timeout instead of returning an empty or unsupported result. Existing Node.js `os` data fallbacks remain available.
 
 ## 📚 Complete API Reference
 

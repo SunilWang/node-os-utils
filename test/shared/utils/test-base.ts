@@ -104,9 +104,9 @@ export class TestValidators {
  */
 export class TestConfig {
   /**
-   * 默认超时时间
+   * 默认监控调用允许 15 秒，外层额外留 5 秒用于完成断言和错误上报。
    */
-  static readonly DEFAULT_TIMEOUT = 10000
+  static readonly DEFAULT_TIMEOUT = 20000
 
   /**
    * 长时间运行测试的超时时间
@@ -125,21 +125,39 @@ export class TestConfig {
 }
 
 /**
- * 异步测试装饰器
+ * 为测试或 hook 保留足够的外层预算，不缩短已有长预算或无限预算。
+ *
+ * @param {Mocha.Context} context 当前 Mocha 上下文
+ * @param {number} minimumTimeout 所需的最小超时时间，单位毫秒
+ * @returns {void}
+ */
+export function ensureMinimumTimeout(context: Mocha.Context, minimumTimeout: number): void {
+  const currentTimeout = context.timeout()
+  if (currentTimeout > 0 && currentTimeout < minimumTimeout) context.timeout(minimumTimeout)
+}
+
+/**
+ * 使用覆盖默认监控调用预算的异步测试装饰器。
+ *
+ * @param {Function} testFn 被包装的测试函数
+ * @returns {Function} 保留 Mocha 上下文的异步测试函数
  */
 export function asyncTest(testFn: Function) {
   return async function(this: Mocha.Context) {
-    this.timeout(TestConfig.DEFAULT_TIMEOUT)
+    ensureMinimumTimeout(this, TestConfig.DEFAULT_TIMEOUT)
     await testFn.call(this)
   }
 }
 
 /**
- * 长时间测试装饰器
+ * 使用较长预算的异步测试装饰器。
+ *
+ * @param {Function} testFn 被包装的测试函数
+ * @returns {Function} 保留 Mocha 上下文的异步测试函数
  */
 export function longTest(testFn: Function) {
   return async function(this: Mocha.Context) {
-    this.timeout(TestConfig.LONG_TIMEOUT)
+    ensureMinimumTimeout(this, TestConfig.LONG_TIMEOUT)
     await testFn.call(this)
   }
 }

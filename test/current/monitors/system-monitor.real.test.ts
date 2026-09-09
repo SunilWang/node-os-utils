@@ -45,10 +45,12 @@ describe('System Monitor 真实运行时契约', function () {
     expect(new Date(time.current).getTime()).to.equal(time.current)
   })
 
-  it('overview 和 healthCheck 应返回聚合状态', async function () {
-    this.timeout(30000)
+  it('overview 应返回聚合信息', async function () {
     const overview = Base.unwrap<any>(await utils.system.overview(), 'system.overview')
     expect(overview).to.have.property('system')
+  })
+
+  it('healthCheck 应返回聚合健康状态', async function () {
     const health = Base.unwrap<any>(await utils.system.healthCheck(), 'system.healthCheck')
     expect(health.status).to.be.oneOf(['healthy', 'warning', 'critical'])
   })

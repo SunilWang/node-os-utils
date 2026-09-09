@@ -319,7 +319,12 @@ export class WindowsAdapter extends BasePlatformAdapter {
     throw this.createUnsupportedError('network.connections');
   }
 
-  /** 获取默认网关 */
+  /**
+   * 获取默认网关。
+   *
+   * @returns {Promise<any>} 网关信息；未配置网关或非超时查询失败时返回 null
+   * @throws {MonitorError} 查询超时时保留原始 TIMEOUT
+   */
   async getDefaultGateway(): Promise<any> {
     try {
       const result = await this.executePowerShell(
@@ -338,7 +343,11 @@ export class WindowsAdapter extends BasePlatformAdapter {
         gateway: value,
         interface: gateway.Description
       };
-    } catch {
+    } catch (error) {
+      // 超时不能证明系统没有默认网关，避免将探测失败缓存为空结果。
+      if (error instanceof MonitorError && error.code === ErrorCode.TIMEOUT) {
+        throw error;
+      }
       return null;
     }
   }
@@ -495,7 +504,12 @@ export class WindowsAdapter extends BasePlatformAdapter {
     throw this.createUnsupportedError('system.users');
   }
 
-  /** 获取系统服务 */
+  /**
+   * 获取系统服务。
+   *
+   * @returns {Promise<any>} 系统服务列表
+   * @throws {MonitorError} 查询超时时保留 TIMEOUT，其他查询失败保持平台不支持错误
+   */
   async getSystemServices(): Promise<any> {
     try {
       const services = await this.executePowerShell(
@@ -507,7 +521,10 @@ export class WindowsAdapter extends BasePlatformAdapter {
         enabled: service.StartType !== 'Disabled',
         description: service.DisplayName
       }));
-    } catch {
+    } catch (error) {
+      if (error instanceof MonitorError && error.code === ErrorCode.TIMEOUT) {
+        throw error;
+      }
       throw this.createUnsupportedError('system.services');
     }
   }

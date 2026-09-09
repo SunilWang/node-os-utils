@@ -129,9 +129,22 @@ describe('CommandExecutor 真实命令执行', function () {
     expect(result.stdout).to.equal('env-ok:true')
   })
 
-  it('应检测当前 Node 可执行文件可用并获取版本', async function () {
-    expect(await executor.isCommandAvailable('node')).to.equal(true)
-    expect(await executor.isCommandAvailable('__node_os_utils_missing_command__')).to.equal(false)
-    expect(await executor.getCommandVersion('node')).to.match(/^v\d+/)
+  describe('命令发现与版本查询', function () {
+    // Windows Runner 的首次 where 查询已出现超过 5 秒的耗时；仅为探测提供独立预算。
+    const timeout = process.platform === 'win32' ? 60000 : 5000
+    const discoveryExecutor = new CommandExecutor(process.platform, { timeout })
+    this.timeout(timeout + 5000)
+
+    it('应在 PATH 中检测到 Node 可执行文件', async function () {
+      expect(await discoveryExecutor.isCommandAvailable('node')).to.equal(true)
+    })
+
+    it('不存在的命令应返回 false', async function () {
+      expect(await discoveryExecutor.isCommandAvailable('__node_os_utils_missing_command__')).to.equal(false)
+    })
+
+    it('应获取当前 Node 命令的版本', async function () {
+      expect(await discoveryExecutor.getCommandVersion('node')).to.match(/^v\d+/)
+    })
   })
 })

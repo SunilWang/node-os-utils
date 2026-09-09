@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { OSUtils } from '../../../src'
 import { ErrorCode } from '../../../src/types/errors'
 import { RealCommandTestBase as Base } from '../real-command-base'
+import { ensureMinimumTimeout } from '../../shared/utils/test-base'
 
 describe('Network Monitor 真实运行时契约', function () {
   let utils: OSUtils
@@ -15,6 +16,7 @@ describe('Network Monitor 真实运行时契约', function () {
   })
 
   it('interfaceByName 应能查询已返回的接口', async function () {
+    ensureMinimumTimeout(this, 35000)
     const interfaces = Base.unwrap<any[]>(await utils.network.interfaces(), 'network.interfaces')
     const detail = Base.unwrap<any>(await utils.network.interfaceByName(interfaces[0].name), 'network.interfaceByName')
     expect(detail?.name).to.equal(interfaces[0].name)
@@ -31,6 +33,7 @@ describe('Network Monitor 真实运行时契约', function () {
   })
 
   it('statsByInterface 应遵循接口名称查询契约', async function () {
+    ensureMinimumTimeout(this, 35000)
     const stats = Base.unwrap<any[]>(await utils.network.statsAsync(), 'network.stats')
     const detail = Base.unwrap<any>(await utils.network.statsByInterface(stats[0]?.interface || 'missing'), 'network.statsByInterface')
     expect(detail === null || detail.interface === stats[0]?.interface).to.equal(true)
@@ -43,15 +46,21 @@ describe('Network Monitor 真实运行时契约', function () {
     if (result.success) expect(result.data === null || typeof result.data === 'object').to.equal(true)
   })
 
-  it('connections、bandwidth 和 healthCheck 应返回可诊断结果', async function () {
+  it('connections 应返回连接或明确不支持', async function () {
     const connections = await utils.network.connections()
     expect(connections.success || connections.error.code === ErrorCode.PLATFORM_NOT_SUPPORTED).to.equal(true)
+  })
+
+  it('bandwidth 应返回有效采样或明确不支持', async function () {
     const bandwidthResult = await utils.network.bandwidth()
     expect(bandwidthResult.success || bandwidthResult.error.code === ErrorCode.PLATFORM_NOT_SUPPORTED).to.equal(true)
     if (bandwidthResult.success) {
       expect(bandwidthResult.data.interfaces).to.be.an('array')
       bandwidthResult.data.interfaces.forEach((item: any) => { Base.assertNonNegative(item.rxSpeed, 'network.rxSpeed'); Base.assertNonNegative(item.txSpeed, 'network.txSpeed') })
     }
+  })
+
+  it('healthCheck 应返回网络健康状态', async function () {
     const health = Base.unwrap<any>(await utils.network.healthCheck(), 'network.healthCheck')
     expect(health.status).to.be.oneOf(['healthy', 'warning', 'critical'])
   })

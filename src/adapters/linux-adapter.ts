@@ -265,6 +265,9 @@ export class LinuxAdapter extends BasePlatformAdapter {
 
   /**
    * 获取网络接口列表
+   *
+   * @returns {Promise<any>} 网络接口列表
+   * @throws {MonitorError} 任一命令超时或主次命令均失败时抛出
    */
   async getNetworkInterfaces(): Promise<any> {
     try {
@@ -272,12 +275,19 @@ export class LinuxAdapter extends BasePlatformAdapter {
       this.validateCommandResult(result, 'ip addr show');
       return this.parseNetworkInterfaces(result.stdout);
     } catch (primaryError) {
+      // 超时结束本次采集；仅对其他失败尝试备用命令。
+      if (primaryError instanceof MonitorError && primaryError.code === ErrorCode.TIMEOUT) {
+        throw primaryError;
+      }
       // 回退到 ifconfig
       try {
         const result = await this.executeCommand('ifconfig');
         this.validateCommandResult(result, 'ifconfig');
         return this.parseIfconfigOutput(result.stdout);
       } catch (fallbackError) {
+        if (fallbackError instanceof MonitorError && fallbackError.code === ErrorCode.TIMEOUT) {
+          throw fallbackError;
+        }
         throw this.createCommandError('getNetworkInterfaces', {
           primary: this.summarizeErrorDetails(primaryError),
           fallback: this.summarizeErrorDetails(fallbackError)
@@ -1047,17 +1057,27 @@ export class LinuxAdapter extends BasePlatformAdapter {
 
   /**
    * 获取网络连接
+   *
+   * @returns {Promise<any>} 网络连接列表
+   * @throws {MonitorError} 任一命令超时或主次命令均失败时抛出
    */
   async getNetworkConnections(): Promise<any> {
     try {
       const result = await this.executeCommand('ss -tuln');
       return this.parseNetworkConnections(result.stdout);
     } catch (primaryError) {
+      // 超时后不再启动 netstat，避免上层结束后继续占用系统资源。
+      if (primaryError instanceof MonitorError && primaryError.code === ErrorCode.TIMEOUT) {
+        throw primaryError;
+      }
       try {
         const result = await this.executeCommand('netstat -tuln');
         this.validateCommandResult(result, 'netstat -tuln');
         return this.parseNetstatConnections(result.stdout);
       } catch (fallbackError) {
+        if (fallbackError instanceof MonitorError && fallbackError.code === ErrorCode.TIMEOUT) {
+          throw fallbackError;
+        }
         throw this.createCommandError('getNetworkConnections', {
           primary: this.summarizeErrorDetails(primaryError),
           fallback: this.summarizeErrorDetails(fallbackError)

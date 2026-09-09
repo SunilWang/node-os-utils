@@ -40,7 +40,9 @@
 
 ### 🧱 架构速览
 - **AdapterFactory** 统一负责平台检测、适配器实例缓存，并提供 `getSupportedPlatforms()`、`checkPlatformCapabilities()` 等辅助工具。
-- **CommandExecutor** 为不同系统提供统一的命令执行与错误封装，支持 `/bin/bash` → `/bin/sh`、PowerShell 自动降级等回退策略。
+- **CommandExecutor** 为不同系统提供统一的命令执行与错误封装，支持配置命令超时。
+
+  命令可用性检查和版本查询遵循执行器配置的超时。两者均保留 `TIMEOUT` 错误；可用性探测超时不会返回 `false`。普通缓冲执行在超时或输出溢出时尝试清理进程树，并保留输出编码及 stdout/stderr 各自的字节限制。
 - **平台适配器** 封装操作系统特定实现（Linux 依赖 `/proc`，macOS 使用 `sysctl`/`powermetrics`，Windows 结合 PowerShell + WMI），并暴露自身支持的特性清单。
 - **CacheManager** 提供基于 TTL 的智能缓存与 LRU 淘汰，显著降低高频监控时的系统开销。
 
@@ -74,10 +76,12 @@ console.table({
   features: report.capabilities.features.join(',')
 });
 
-if (!report.supported) {
-  console.warn('❗ 当前平台部分能力不可用:', report.issues);
+if (report.issues.length > 0) {
+  console.warn('❗ 平台能力探测问题:', report.issues);
 }
 ```
+
+`OSUtils.checkPlatformCapabilities()` 复用当前实例的适配器与命令超时配置。平台不支持、适配器初始化失败或功能枚举失败时，`supported` 继续返回 `false`。单项命令或文件探测失败（包括 `TIMEOUT`）会记录到 `issues`，同时保留已确认的能力。静态方法 `AdapterFactory.checkPlatformCapabilities(platformOrAdapter?)` 既接受平台名称，也接受已有适配器以复用其配置，原有传入平台名称的调用方式继续有效。
 
 需要进一步排查时，还可以调用 `AdapterFactory.getDebugInfo()` 查看适配器特性与系统命令可用性。
 
@@ -266,6 +270,7 @@ enum ErrorCode {
 - **Windows 网络 / 进程指标** 使用 PowerShell CIM 指令（`Get-NetAdapterStatistics`、`Get-CimInstance`），遇到 `PERMISSION_DENIED` 或 `COMMAND_FAILED` 建议在提升权限的 PowerShell 会话中运行。
 - **Linux 命令回退**：大多数数据来自 `/proc`，若 `ip`、`ss` 等工具缺失，会自动回退到 `ifconfig`、`netstat`。你也可以提前通过 `osutils.checkPlatformCapabilities()` 验证依赖。
 - 建议检查 `MonitorResult.error.code`，依据不同错误类型（超时、权限、平台不支持）给用户友好的提示。
+- 命令超时经过适配器错误封装时保留 `TIMEOUT`。macOS CPU 和 Linux 网络查询超时后不再启动备用命令；Windows 网关及服务查询超时不会转换为空结果或平台不支持。原有 Node.js `os` 数据降级仍然保留。
 
 ## 📚 完整 API 参考
 

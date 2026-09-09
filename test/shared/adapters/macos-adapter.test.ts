@@ -7,6 +7,59 @@ import { MacOSAdapter } from '../../../src/adapters/macos-adapter';
 import { MonitorError, ErrorCode } from '../../../src/types/errors';
 import { removePathSync } from '../utils/remove-path';
 
+describe('MacOSAdapter 超时传播', () => {
+  it('磁盘查询应保留底层 TIMEOUT 及诊断', async () => {
+    const adapter = new MacOSAdapter();
+    const timeout = new MonitorError('df timeout', ErrorCode.TIMEOUT, 'darwin', { command: 'df -Ph' });
+    (adapter as any).executeCommand = async () => { throw timeout; };
+
+    let caught: unknown;
+    try {
+      await adapter.getDiskInfo();
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).to.equal(timeout);
+  });
+
+  for (const timeoutOnFallback of [false, true]) {
+    it(timeoutOnFallback ? 'iostat 回退超时应保留原始 TIMEOUT' : 'top 超时后不应启动 iostat 回退', async () => {
+      const adapter = new MacOSAdapter();
+      const commands: string[] = [];
+      const timeout = new MonitorError('CPU command timeout', ErrorCode.TIMEOUT, 'darwin');
+      (adapter as any).executeCommand = async (command: string) => {
+        commands.push(command);
+        if (timeoutOnFallback && commands.length === 1) {
+          throw MonitorError.createCommandFailed('darwin', command);
+        }
+        throw timeout;
+      };
+
+      let caught: unknown;
+      try {
+        await adapter.getCPUUsage();
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).to.equal(timeout);
+      expect(commands).to.deep.equal(timeoutOnFallback ? ['top -l 1 -n 0', 'iostat -c 1'] : ['top -l 1 -n 0']);
+    });
+  }
+
+  it('top 普通失败仍应回退到 iostat 并解析真实格式数据', async () => {
+    const adapter = new MacOSAdapter();
+    const commands: string[] = [];
+    (adapter as any).executeCommand = async (command: string) => {
+      commands.push(command);
+      if (commands.length === 1) throw MonitorError.createCommandFailed('darwin', command);
+      return { command, stdout: 'us sy id\n10 20 70\n', stderr: '', exitCode: 0, platform: 'darwin', executionTime: 1 };
+    };
+
+    expect(await adapter.getCPUUsage()).to.include({ overall: 30, user: 10, system: 20, idle: 70 });
+    expect(commands).to.deep.equal(['top -l 1 -n 0', 'iostat -c 1']);
+  });
+});
+
 describe('MacOSAdapter 内部解析逻辑', () => {
   it('应当将 RSS 转换为字节并保留内存百分比', () => {
     const adapter = new MacOSAdapter();

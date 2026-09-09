@@ -121,9 +121,12 @@ export class AdapterFactory {
   }
 
   /**
-   * 检查平台能力
+   * 检查平台能力，复用传入适配器的命令执行配置。
+   *
+   * @param {string | PlatformAdapter} platformOrAdapter 平台名称或已有适配器；省略时检测当前平台
+   * @returns 平台支持状态、已确认能力及探测问题；初始化或功能枚举失败时 supported 为 false
    */
-  static async checkPlatformCapabilities(platform?: string): Promise<{
+  static async checkPlatformCapabilities(platformOrAdapter?: string | PlatformAdapter): Promise<{
     platform: string;
     supported: boolean;
     capabilities: {
@@ -133,6 +136,8 @@ export class AdapterFactory {
     };
     issues: string[];
   }> {
+    const providedAdapter = typeof platformOrAdapter === 'object' ? platformOrAdapter : undefined;
+    const platform = providedAdapter ? providedAdapter.getPlatform() : platformOrAdapter as string | undefined;
     const targetPlatform = this.normalizePlatform(platform || this.detectPlatform());
     const supported = this.isPlatformSupported(targetPlatform);
 
@@ -150,14 +155,15 @@ export class AdapterFactory {
     }
 
     try {
-      const adapter = this.create(targetPlatform);
-      const capabilities = await this.testAdapterCapabilities(adapter);
+      const adapter = providedAdapter || this.create(targetPlatform);
+      const issues: string[] = [];
+      const { capabilities, supported } = await this.testAdapterCapabilities(adapter, issues);
 
       return {
         platform: targetPlatform,
-        supported: true,
+        supported,
         capabilities,
-        issues: []
+        issues
       };
     } catch (error) {
       return {
@@ -168,7 +174,7 @@ export class AdapterFactory {
           files: [],
           features: []
         },
-        issues: [error instanceof Error ? error.message : String(error)]
+        issues: [this.describeProbeError(error)]
       };
     }
   }
@@ -222,12 +228,19 @@ export class AdapterFactory {
   }
 
   /**
-   * 调用适配器运行一系列命令/文件探测以判定平台能力
+   * 调用适配器运行命令、文件和功能探测，分别保留成功结果与失败诊断。
+   *
+   * @param {PlatformAdapter} adapter 复用默认执行选项的平台适配器
+   * @param {string[]} issues 收集未能完成的探测问题
+   * @returns 已确认能力及支持状态；功能枚举失败保留已有结果并将 supported 设为 false
    */
-  private static async testAdapterCapabilities(adapter: PlatformAdapter): Promise<{
-    commands: string[];
-    files: string[];
-    features: string[];
+  private static async testAdapterCapabilities(adapter: PlatformAdapter, issues: string[]): Promise<{
+    capabilities: {
+      commands: string[];
+      files: string[];
+      features: string[];
+    };
+    supported: boolean;
   }> {
     const capabilities = {
       commands: [] as string[],
@@ -244,10 +257,21 @@ export class AdapterFactory {
           ? `where ${command}`
           : `which ${command}`;
 
-        await adapter.executeCommand(executableCheck, { timeout: 3000 });
-        capabilities.commands.push(command);
-      } catch {
-        // 命令不可用
+        // 使用适配器预算，避免能力自检比实际监控更早超时；定位器退出 1 表示目标不存在。
+        const result = await adapter.executeCommand(executableCheck);
+        if (result.exitCode === 0 && result.stdout.trim()) {
+          capabilities.commands.push(command);
+        } else if (result.exitCode !== 1) {
+          issues.push(result.exitCode === 0
+            ? `Command probe "${command}" returned no executable path`
+            : `Command probe "${command}" failed with exit code ${result.exitCode}: ${result.stderr}`);
+        }
+      } catch (error) {
+        const commandMissing = error instanceof MonitorError &&
+          error.code === ErrorCode.COMMAND_FAILED && error.details?.exitCode === 1;
+        if (!commandMissing) {
+          issues.push(`Command probe "${command}" failed: ${this.describeProbeError(error)}`);
+        }
       }
     }
 
@@ -260,22 +284,42 @@ export class AdapterFactory {
         if (exists) {
           capabilities.files.push(file);
         }
-      } catch {
-        // 文件不可访问
-      }
-    }
-
-    // 测试功能支持
-    const supportedFeatures = adapter.getSupportedFeatures();
-    for (const [category, features] of Object.entries(supportedFeatures)) {
-      for (const [feature, supported] of Object.entries(features)) {
-        if (supported) {
-          capabilities.features.push(`${category}.${feature}`);
+      } catch (error) {
+        if (!(error instanceof MonitorError && error.code === ErrorCode.FILE_NOT_FOUND)) {
+          issues.push(`File probe "${file}" failed: ${this.describeProbeError(error)}`);
         }
       }
     }
 
-    return capabilities;
+    // 功能枚举失败沿用原有 supported:false 语义，并保留此前探测成功的能力。
+    let featureProbeSucceeded = true;
+    try {
+      const supportedFeatures = adapter.getSupportedFeatures();
+      for (const [category, features] of Object.entries(supportedFeatures)) {
+        for (const [feature, supported] of Object.entries(features)) {
+          if (supported) {
+            capabilities.features.push(`${category}.${feature}`);
+          }
+        }
+      }
+    } catch (error) {
+      featureProbeSucceeded = false;
+      issues.push(`Feature probe failed: ${this.describeProbeError(error)}`);
+    }
+
+    return { capabilities, supported: featureProbeSucceeded };
+  }
+
+  /**
+   * 格式化探测异常，并保留 MonitorError 的分类以便识别超时等临时故障。
+   *
+   * @param {unknown} error 探测过程捕获的异常
+   * @returns {string} 包含错误分类及原始消息的诊断描述
+   */
+  private static describeProbeError(error: unknown): string {
+    return error instanceof MonitorError
+      ? `[${error.code}] ${error.message}`
+      : error instanceof Error ? error.message : String(error);
   }
 
   /**

@@ -8,6 +8,7 @@ import { AdapterFactory } from '../../src/adapters/adapter-factory';
 import { PlatformAdapter, CommandResult } from '../../src/types/platform';
 import { DataSize } from '../../src/types/common';
 import { removePathSync } from './utils/remove-path';
+import { ExecuteOptions } from '../../src/types/config';
 
 function createAdapterStub(): PlatformAdapter {
   return {
@@ -190,6 +191,40 @@ describe('OSUtils 入口类', () => {
     expect(utils.system.getConfig().timeout).to.equal(15000);
     utils.destroy();
   });
+
+  for (const configuredTimeout of [undefined, 60000]) {
+    it(`能力检测应复用实例适配器并继承 ${configuredTimeout ?? 10000}ms 全局命令预算`, async () => {
+      const observedTimeouts: number[] = [];
+      let createCalls = 0;
+      AdapterFactory.create = (platform, options) => {
+        createCalls += 1;
+        const adapter = originalCreate.call(AdapterFactory, platform, options);
+        const executor = (adapter as any).executor;
+        executor.executeWithTimeout = async (_command: string, executeOptions: ExecuteOptions) => {
+          observedTimeouts.push(executeOptions.timeout!);
+          return { stdout: '/usr/bin/test', stderr: '' };
+        };
+        adapter.fileExists = async () => true;
+        return adapter;
+      };
+      const utils = new OSUtilsClass({
+        platform: 'darwin',
+        ...(configuredTimeout === undefined ? {} : { timeout: configuredTimeout })
+      });
+
+      try {
+        const result = await utils.checkPlatformCapabilities();
+
+        expect(result.capabilities.commands).to.include('ps');
+        expect(result.issues).to.deep.equal([]);
+        expect(createCalls).to.equal(1);
+        expect(observedTimeouts).to.have.length(8);
+        expect(observedTimeouts.every(value => value === (configuredTimeout ?? 10000))).to.equal(true);
+      } finally {
+        utils.destroy();
+      }
+    });
+  }
 
   it('configureCache 会重建缓存并重置监控器实例', () => {
     const utils = new OSUtilsClass({ platform: 'test' });
